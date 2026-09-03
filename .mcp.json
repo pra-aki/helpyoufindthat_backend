@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "command": "/bin/zsh",
+      "args": [
+        "-lc",
+        "exec npx -y @supabase/mcp-server-supabase@0.11.0"
+      ]
+    },
+    "render": {
+      "command": "/bin/zsh",
+      "args": [
+        "-lc",
+        "exec npx -y mcp-remote@0.8.3 https://mcp.render.com/mcp --header \"Authorization: Bearer $RENDER_API_KEY\""
+      ]
+    }
+  }
+}

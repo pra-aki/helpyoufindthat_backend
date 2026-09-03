@@ -1,0 +1,18 @@
+{
+  "name": "helpyoufindthat-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Finds public forum threads where people are looking for a solution like a given product, via Perplexity search.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
