@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
 import { getForum } from '../src/forums/index.js';
-import { searchThreads, parseThreadsResponse, formatPerplexityDate, recencyFilterFor } from '../src/services/perplexity.js';
+import { searchThreads, parseThreadsResponse, formatPerplexityDate } from '../src/services/perplexity.js';
 
 const config = loadConfig({ PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
 const reddit = getForum('reddit');
@@ -19,10 +19,6 @@ const jsonResponse = (body, status = 200) =>
 
 test('date helpers', () => {
   assert.equal(formatPerplexityDate(new Date('2026-09-02T00:00:00Z')), '09/02/2026');
-  assert.equal(recencyFilterFor(1), 'day');
-  assert.equal(recencyFilterFor(7), 'week');
-  assert.equal(recencyFilterFor(30), 'month');
-  assert.equal(recencyFilterFor(90), 'year');
 });
 
 test('sends the right request to Perplexity: auth header, domain filter, date window, no key in body', async () => {
@@ -37,8 +33,8 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.equal(captured.url, 'https://pplx.test/chat/completions');
   assert.equal(captured.init.headers.Authorization, 'Bearer test-key');
   assert.deepEqual(captured.body.search_domain_filter, ['reddit.com']);
-  assert.equal(captured.body.search_recency_filter, 'week');
   assert.equal(captured.body.search_after_date_filter, '08/26/2026');
+  assert.equal(captured.body.search_recency_filter, undefined, 'Perplexity rejects recency + date filters together');
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[1].content, /A tool that does X/);
   assert.match(captured.body.messages[1].content, /up to 3 public Reddit threads/);

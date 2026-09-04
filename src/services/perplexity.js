@@ -37,9 +37,6 @@ export const formatPerplexityDate = (date) => {
   return `${mm}/${dd}/${date.getUTCFullYear()}`;
 };
 
-/** Coarse bucket that Perplexity's search_recency_filter understands. */
-export const recencyFilterFor = (days) => (days <= 1 ? 'day' : days <= 7 ? 'week' : days <= 31 ? 'month' : 'year');
-
 export function buildUserPrompt({ productDescription, forum, threads, days, after }) {
   return [
     'Product description:',
@@ -176,7 +173,7 @@ export async function searchThreads({ productDescription, forum, threads, days, 
       { role: 'user', content: buildUserPrompt({ productDescription, forum, threads, days, after }) },
     ],
     search_domain_filter: forum.domains,
-    search_recency_filter: recencyFilterFor(days),
+    // Perplexity rejects search_recency_filter combined with a date filter, so only the exact date is sent.
     search_after_date_filter: formatPerplexityDate(after),
     return_related_questions: false,
     response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },

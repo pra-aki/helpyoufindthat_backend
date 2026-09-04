@@ -91,7 +91,7 @@ Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 fo
 For each request the server makes one Perplexity chat completion with:
 
 - `search_domain_filter` restricted to the forum's domains
-- `search_after_date_filter` and `search_recency_filter` derived from `days`
+- `search_after_date_filter` set to today minus `days` (Perplexity does not allow combining it with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
 Results are then filtered to URLs that are actually on the forum's domain and look like a thread (not an index or profile page), deduplicated, sorted by relevance, and cut to `threads`. If the model returns unusable JSON the raw `search_results` are used as a fallback.
