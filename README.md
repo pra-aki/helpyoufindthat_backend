@@ -27,6 +27,17 @@ const res = await fetch('https://helpyoufindthat-backend.onrender.com/api/thread
 
 The server verifies the token's signature against the project's public JWKS endpoint (`SUPABASE_URL/auth/v1/.well-known/jwks.json`), plus its issuer, audience, and expiry. No shared secret is involved, so nothing sensitive ships to the browser. Missing or invalid tokens get 401; anonymous Supabase sessions get 403.
 
+### Testing by hand before the front end has sign-in
+
+```bash
+npm run token -- you@example.com 'a-password' --signup   # creates the user; drop --signup afterwards
+TOKEN=$(npm run -s token -- you@example.com 'a-password')
+curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"productDescription":"An app that reminds small-business owners to follow up with leads","forum":"reddit","threads":5,"days":7}'
+```
+
+This needs `SUPABASE_ANON_KEY` in `.env` (the project's public client key, found under Project Settings > API Keys). If email confirmation is enabled in your Supabase auth settings, confirm the test user in the dashboard before signing in.
+
 Each user is limited to `RATE_LIMIT_PER_MINUTE` searches per minute (default 20); over that returns 429 with a `Retry-After` header. `/health` and `/api/forums` are public.
 
 Set `CORS_ORIGINS` to your front end's origin(s) in production. When it's empty any origin is accepted, which is convenient for local development and safe only because the token, not the origin, is what grants access.
