@@ -1,5 +1,5 @@
 import { HttpError } from './errors.js';
-import { getForum, listForums } from './forums/index.js';
+import { forums as allForums, getForum, listForums } from './forums/index.js';
 
 const firstDefined = (source, keys) => {
   for (const key of keys) {
@@ -21,12 +21,45 @@ const toPositiveInt = (value, { name, fallback, max }) => {
 };
 
 /**
+ * Accepts a forum id, a list of ids, a comma-separated string, or "all".
+ * Returns a de-duplicated array of forum registry entries in request order.
+ */
+export function parseForums(input) {
+  const supported = listForums().map((f) => f.id);
+  const raw = Array.isArray(input) ? input : typeof input === 'string' ? input.split(',') : input === undefined ? [] : [input];
+  const names = raw.map((v) => (typeof v === 'string' ? v.trim() : v)).filter((v) => v !== '' && v !== undefined && v !== null);
+
+  if (names.length === 0) {
+    throw new HttpError(400, '"forum" is required: a forum id, a list of ids, or "all"', { field: 'forum', supported: [...supported, 'all'] });
+  }
+  if (names.some((n) => typeof n !== 'string')) {
+    throw new HttpError(400, '"forum" must be a string or a list of strings', { field: 'forum', supported: [...supported, 'all'] });
+  }
+  if (names.some((n) => n.toLowerCase() === 'all')) {
+    return [...allForums];
+  }
+  const seen = new Set();
+  const resolved = [];
+  for (const name of names) {
+    const forum = getForum(name);
+    if (!forum) {
+      throw new HttpError(400, `Unsupported forum "${name}"`, { field: 'forum', received: name, supported: [...supported, 'all'] });
+    }
+    if (!seen.has(forum.id)) {
+      seen.add(forum.id);
+      resolved.push(forum);
+    }
+  }
+  return resolved;
+}
+
+/**
  * Accepts the request body (POST) or query string (GET) and returns
- * { productDescription, forum, threads, days }.
+ * { productDescription, forums, threads, days }.
  *
  * Accepted parameter spellings:
  *   productDescription | product_description | description
- *   forum | forumName | forum_name
+ *   forum | forums | forumName | forum_name   (id, list of ids, comma-separated ids, or "all")
  *   threads | x | maxThreads | max_threads
  *   days | y
  */
@@ -48,21 +81,7 @@ export function parseSearchRequest(source, config) {
     });
   }
 
-  const forumInput = firstDefined(source, ['forum', 'forumName', 'forum_name']);
-  if (typeof forumInput !== 'string' || forumInput.trim().length === 0) {
-    throw new HttpError(400, '"forum" is required', {
-      field: 'forum',
-      supported: listForums().map((f) => f.id),
-    });
-  }
-  const forum = getForum(forumInput);
-  if (!forum) {
-    throw new HttpError(400, `Unsupported forum "${forumInput}"`, {
-      field: 'forum',
-      received: forumInput,
-      supported: listForums().map((f) => f.id),
-    });
-  }
+  const forums = parseForums(firstDefined(source, ['forum', 'forums', 'forumName', 'forum_name']));
 
   const threads = toPositiveInt(firstDefined(source, ['threads', 'x', 'maxThreads', 'max_threads']), {
     name: 'threads',
@@ -75,7 +94,7 @@ export function parseSearchRequest(source, config) {
     max: config.limits.maxDays,
   });
 
-  return { productDescription: description.trim(), forum, threads, days };
+  return { productDescription: description.trim(), forums, threads, days };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

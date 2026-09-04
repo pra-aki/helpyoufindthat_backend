@@ -22,7 +22,7 @@ export function threadsRouter({ config, search = searchThreads, protect = [] }) 
     res.json({
       query: {
         productDescription: params.productDescription,
-        forum: params.forum.id,
+        forums: params.forums.map((f) => f.id),
         threads: params.threads,
         days: params.days,
       },
@@ -32,10 +32,10 @@ export function threadsRouter({ config, search = searchThreads, protect = [] }) 
     });
   };
 
-  // POST /api/threads  { "productDescription": "...", "forum": "reddit", "threads": 10, "days": 1 }
+  // POST /api/threads  { "productDescription": "...", "forum": "reddit" | ["reddit","hackernews"] | "all", "threads": 10, "days": 1 }
   router.post('/threads', ...protect, async (req, res) => handleSearch(req, req.body, res));
 
-  // GET /api/threads?productDescription=...&forum=reddit&threads=10&days=1
+  // GET /api/threads?productDescription=...&forum=reddit,hackernews&threads=10&days=1
   router.get('/threads', ...protect, async (req, res) => handleSearch(req, req.query, res));
 
   return router;

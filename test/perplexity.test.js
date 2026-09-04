@@ -6,6 +6,8 @@ import { searchThreads, parseThreadsResponse, formatPerplexityDate } from '../sr
 
 const config = loadConfig({ PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
 const reddit = getForum('reddit');
+const hn = getForum('hackernews');
+const x = getForum('x');
 
 const completion = (threads, searchResults = []) => ({
   model: 'sonar-pro',
@@ -28,7 +30,7 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
     return jsonResponse(completion([]));
   };
   const now = new Date('2026-09-02T12:00:00Z');
-  await searchThreads({ productDescription: 'A tool that does X', forum: reddit, threads: 3, days: 7, config, fetchImpl, now });
+  await searchThreads({ productDescription: 'A tool that does X', forums: [reddit], threads: 3, days: 7, config, fetchImpl, now });
 
   assert.equal(captured.url, 'https://pplx.test/chat/completions');
   assert.equal(captured.init.headers.Authorization, 'Bearer test-key');
@@ -38,7 +40,30 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[1].content, /A tool that does X/);
   assert.match(captured.body.messages[1].content, /up to 3 public Reddit threads/);
+  assert.deepEqual(captured.body.web_search_options, { search_context_size: 'medium' });
   assert.ok(!captured.init.body.includes('test-key'), 'API key must not leak into the request body');
+});
+
+test('multi-forum search sends the union of domains in one call and tags each thread with its source', async () => {
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = JSON.parse(init.body);
+    return jsonResponse(
+      completion([
+        { title: 'HN', url: 'https://news.ycombinator.com/item?id=41', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.7 },
+        { title: 'Reddit', url: 'https://www.reddit.com/r/a/comments/abc123/t/', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.9 },
+        { title: 'X', url: 'https://x.com/u/status/123', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.8 },
+        { title: 'Quora (not requested)', url: 'https://www.quora.com/Some-question', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 1 },
+      ]),
+    );
+  };
+  const { threads, meta } = await searchThreads({ productDescription: 'd', forums: [reddit, hn, x], threads: 10, days: 1, config, fetchImpl });
+  assert.deepEqual(captured.search_domain_filter, ['reddit.com', 'news.ycombinator.com', 'x.com', 'twitter.com']);
+  assert.match(captured.messages[1].content, /public threads on Reddit, Hacker News and X \(Twitter\)/);
+  assert.match(captured.messages[1].content, /do not favour one site over another/);
+  assert.match(captured.messages[1].content, /- Hacker News: /);
+  assert.deepEqual(threads.map((t) => [t.title, t.source]), [['Reddit', 'reddit'], ['X', 'x'], ['HN', 'hackernews']]);
+  assert.deepEqual(meta.searchedForums, ['reddit', 'hackernews', 'x']);
 });
 
 test('filters to forum domains and real thread URLs, dedupes, sorts by score, limits to x', () => {
@@ -54,12 +79,12 @@ test('filters to forum domains and real thread URLs, dedupes, sorts by score, li
     ],
     [{ title: 'Weak (search)', url: 'https://www.reddit.com/r/a/comments/aaa111/weak/', date: '2026-08-31' }],
   );
-  const out = parseThreadsResponse(data, { forum: reddit, threads: 2 });
+  const out = parseThreadsResponse(data, { forums: [reddit], threads: 2 });
   assert.deepEqual(out.map((t) => t.title), ['Strong', 'Medium']);
   assert.equal(out[0].source, 'reddit');
   assert.equal(out[0].postedAt, '2026-09-01');
 
-  const all = parseThreadsResponse(data, { forum: reddit, threads: 10 });
+  const all = parseThreadsResponse(data, { forums: [reddit], threads: 10 });
   assert.equal(all.length, 3);
   assert.equal(all[2].postedAt, '2026-08-31', 'date is backfilled from search_results');
 });
@@ -72,7 +97,7 @@ test('falls back to search_results when the model content is not JSON', () => {
     ],
     choices: [{ message: { content: 'Sorry, here is some prose instead.' } }],
   };
-  const out = parseThreadsResponse(data, { forum: reddit, threads: 5 });
+  const out = parseThreadsResponse(data, { forums: [reddit], threads: 5 });
   assert.equal(out.length, 1);
   assert.equal(out[0].title, 'From search');
 });
@@ -81,11 +106,11 @@ test('parses JSON wrapped in a code fence', () => {
   const data = {
     choices: [{ message: { content: '```json\n{"threads":[{"title":"T","url":"https://reddit.com/r/a/comments/eee555/t","summary":"","why_relevant":"","posted_at":"","relevance_score":0.7}]}\n```' } }],
   };
-  assert.equal(parseThreadsResponse(data, { forum: reddit, threads: 5 }).length, 1);
+  assert.equal(parseThreadsResponse(data, { forums: [reddit], threads: 5 }).length, 1);
 });
 
 test('maps upstream failures to HTTP errors', async () => {
-  const base = { productDescription: 'd', forum: reddit, threads: 1, days: 1, config };
+  const base = { productDescription: 'd', forums: [reddit], threads: 1, days: 1, config };
   await assert.rejects(
     searchThreads({ ...base, fetchImpl: async () => jsonResponse({ error: 'nope' }, 401) }),
     (err) => err.status === 502 && /HTTP 401/.test(err.message),

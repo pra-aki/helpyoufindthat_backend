@@ -57,9 +57,9 @@ test('POST /api/threads with a valid token returns results, echoes defaults, and
   const res = await post({ productDescription: 'A tool that finds parking', forum: 'Reddit' }, auth);
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.deepEqual(body.query, { productDescription: 'A tool that finds parking', forum: 'reddit', threads: 10, days: 1 });
+  assert.deepEqual(body.query, { productDescription: 'A tool that finds parking', forums: ['reddit'], threads: 10, days: 1 });
   assert.equal(body.count, 1);
-  assert.equal(lastSearchArgs.forum.id, 'reddit');
+  assert.deepEqual(lastSearchArgs.forums.map((f) => f.id), ['reddit']);
   assert.equal(lastSearchArgs.user.id, 'user-1');
 });
 
@@ -67,7 +67,18 @@ test('GET /api/threads accepts query-string parameters including x and y', async
   const qs = new URLSearchParams({ productDescription: 'desc', forum: 'hacknews', x: '4', y: '14' });
   const res = await fetch(`${base}/api/threads?${qs}`, { headers: auth });
   assert.equal(res.status, 200);
-  assert.deepEqual((await res.json()).query, { productDescription: 'desc', forum: 'hackernews', threads: 4, days: 14 });
+  assert.deepEqual((await res.json()).query, { productDescription: 'desc', forums: ['hackernews'], threads: 4, days: 14 });
+});
+
+test('forum accepts a JSON array in POST and a comma list in GET', async () => {
+  const fresh = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify }).listen(0);
+  await new Promise((r) => fresh.once('listening', r));
+  const b = `http://127.0.0.1:${fresh.address().port}`;
+  const postRes = await fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productDescription: 'desc', forum: ['reddit', 'x'] }) });
+  assert.deepEqual((await postRes.json()).query.forums, ['reddit', 'x']);
+  const getRes = await fetch(`${b}/api/threads?${new URLSearchParams({ productDescription: 'desc', forum: 'all' })}`, { headers: auth });
+  assert.equal((await getRes.json()).query.forums.length, 6);
+  fresh.close();
 });
 
 test('rate limit kicks in per user after the configured number of requests', async () => {

@@ -18,6 +18,9 @@ export function loadConfig(env = process.env) {
       baseUrl: (env.PERPLEXITY_BASE_URL ?? 'https://api.perplexity.ai').replace(/\/+$/, ''),
       model: env.PERPLEXITY_MODEL ?? 'sonar-pro',
       timeoutMs: num(env.PERPLEXITY_TIMEOUT_MS, 60_000),
+      // How much web context Perplexity gathers per call: low | medium | high. High costs more but
+      // surfaces more sources, which matters when one call covers several forums.
+      searchContextSize: ['low', 'medium', 'high'].includes(env.PERPLEXITY_SEARCH_CONTEXT) ? env.PERPLEXITY_SEARCH_CONTEXT : 'medium',
     },
     supabase: {
       url: supabaseUrl,

@@ -53,8 +53,8 @@ Lists supported forums with their ids, aliases, and searched domains.
 | Parameter | Required | Default | Notes |
 |---|---|---|---|
 | `productDescription` | yes | | What the product does. Max 2000 chars. Also accepted as `product_description` or `description`. |
-| `forum` | yes | | One of `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forumName` / `forum_name`. |
-| `threads` | no | 10 | Max number of threads to return (1 to 50). Also accepted as `x` or `maxThreads`. |
+| `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
+| `threads` | no | 10 | Max number of threads to return in total, across all requested forums (1 to 50). Also accepted as `x` or `maxThreads`. |
 | `days` | no | 1 | Only threads posted within the last N days (1 to 365). Also accepted as `y`. |
 
 ```bash
@@ -63,11 +63,19 @@ curl -s http://localhost:3000/api/threads \
   -d '{"productDescription":"An app that reminds small-business owners to follow up with leads","forum":"reddit","threads":5,"days":7}'
 ```
 
+Search several forums in one call (each thread's `source` says where it came from):
+
+```bash
+curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"productDescription":"...","forum":["reddit","hackernews","x"],"threads":10,"days":7}'
+# or  "forum":"all"      or, with GET,  ?forum=reddit,hackernews
+```
+
 Response:
 
 ```json
 {
-  "query": { "productDescription": "...", "forum": "reddit", "threads": 5, "days": 7 },
+  "query": { "productDescription": "...", "forums": ["reddit"], "threads": 5, "days": 7 },
   "count": 3,
   "threads": [
     {
@@ -80,7 +88,7 @@ Response:
       "source": "reddit"
     }
   ],
-  "meta": { "model": "sonar-pro", "searchedDomains": ["reddit.com"], "after": "...", "usage": { }, "rawResultCount": 8 }
+  "meta": { "model": "sonar-pro", "searchedForums": ["reddit"], "searchedDomains": ["reddit.com"], "after": "...", "usage": { }, "rawResultCount": 8 }
 }
 ```
 
@@ -112,13 +120,16 @@ The backend talks to Supabase's REST endpoint with the caller's own token, so no
 
 ## How search works
 
-For each request the server makes one Perplexity chat completion with:
+Each request is exactly one Perplexity chat completion, whether it covers one forum or all of them, with:
 
-- `search_domain_filter` restricted to the forum's domains
+- `search_domain_filter` restricted to the requested forums' domains
+- `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, useful for multi-forum searches, at a higher cost)
 - `search_after_date_filter` set to today minus `days` (Perplexity does not allow combining it with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
-Results are then filtered to URLs that are actually on the forum's domain and look like a thread (not an index or profile page), deduplicated, sorted by relevance, and cut to `threads`. If the model returns unusable JSON the raw `search_results` are used as a fallback.
+Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`.
+
+The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the poster is seeking something like the product. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 
 ## Adding a forum
 
@@ -136,6 +147,7 @@ Results are then filtered to URLs that are actually on the forum's domain and lo
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | per user |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |
+| `PERPLEXITY_SEARCH_CONTEXT` | `medium` | `low`, `medium`, or `high` |
 | `PERPLEXITY_BASE_URL` | `https://api.perplexity.ai` | override for testing against a mock |
 | `PERPLEXITY_TIMEOUT_MS` | `60000` | |
 | `PORT` | `3000` | |

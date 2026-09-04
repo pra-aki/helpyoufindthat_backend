@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
-import { parseSearchRequest } from '../src/validation.js';
+import { parseSearchRequest, parseForums } from '../src/validation.js';
 
 const config = loadConfig({});
 
@@ -9,7 +9,7 @@ test('applies defaults x=10, y=1 when not specified', () => {
   const r = parseSearchRequest({ productDescription: 'An app that finds parking', forum: 'reddit' }, config);
   assert.equal(r.threads, 10);
   assert.equal(r.days, 1);
-  assert.equal(r.forum.id, 'reddit');
+  assert.deepEqual(r.forums.map((f) => f.id), ['reddit']);
   assert.equal(r.productDescription, 'An app that finds parking');
 });
 
@@ -17,7 +17,24 @@ test('accepts x/y and snake_case spellings, coercing query-string numbers', () =
   const r = parseSearchRequest({ product_description: 'desc', forum_name: 'Hacker News', x: '5', y: '30' }, config);
   assert.equal(r.threads, 5);
   assert.equal(r.days, 30);
-  assert.equal(r.forum.id, 'hackernews');
+  assert.deepEqual(r.forums.map((f) => f.id), ['hackernews']);
+});
+
+test('forum accepts a list, a comma-separated string, or "all", de-duplicating aliases', () => {
+  const ids = (input) => parseForums(input).map((f) => f.id);
+  assert.deepEqual(ids(['reddit', 'Hacker News', 'x']), ['reddit', 'hackernews', 'x']);
+  assert.deepEqual(ids('reddit, hacknews ,twitter'), ['reddit', 'hackernews', 'x']);
+  assert.deepEqual(ids(['reddit', 'Reddit', 'reddit']), ['reddit']);
+  assert.deepEqual(ids('all'), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups', 'hackernews', 'x']);
+  assert.deepEqual(ids(['reddit', 'ALL']), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups', 'hackernews', 'x']);
+  const r = parseSearchRequest({ productDescription: 'desc', forums: ['quora', 'x'] }, config);
+  assert.deepEqual(r.forums.map((f) => f.id), ['quora', 'x']);
+});
+
+test('forum list rejects empty lists, non-strings, and unknown entries', () => {
+  assert.throws(() => parseForums([]), (e) => e.status === 400 && /required/.test(e.message));
+  assert.throws(() => parseForums(['reddit', 42]), (e) => e.status === 400 && /list of strings/.test(e.message));
+  assert.throws(() => parseForums(['reddit', 'myspace']), (e) => e.status === 400 && /Unsupported forum "myspace"/.test(e.message) && e.details.supported.includes('all'));
 });
 
 const rejects = (body, pattern) =>

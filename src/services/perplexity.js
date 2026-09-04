@@ -37,24 +37,34 @@ export const formatPerplexityDate = (date) => {
   return `${mm}/${dd}/${date.getUTCFullYear()}`;
 };
 
-export function buildUserPrompt({ productDescription, forum, threads, days, after }) {
+const joinNames = (names) => (names.length <= 1 ? names[0] ?? '' : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+export function buildUserPrompt({ productDescription, forums, threads, days, after }) {
+  const single = forums.length === 1;
+  const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
+  const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
+  const ranking = single
+    ? 'Rank by relevance, with the strongest buying or searching intent first.'
+    : 'Rank by relevance across all sites together, with the strongest buying or searching intent first; do not favour one site over another.';
   return [
     'Product description:',
     '"""',
     productDescription,
     '"""',
     '',
-    `Find up to ${threads} public ${forum.name} threads posted within the last ${days} day${days === 1 ? '' : 's'} (on or after ${after.toISOString().slice(0, 10)}) where the poster is looking for a solution like the product described above.`,
+    `Find up to ${threads} ${where} posted within the last ${days} day${days === 1 ? '' : 's'} (on or after ${after.toISOString().slice(0, 10)}) where the poster is looking for a solution like the product described above.`,
     'Strong signals: asking for recommendations or alternatives, asking how to solve the underlying problem, "is there a tool that ...", or frustration that no good solution exists.',
     '',
-    forum.threadHint,
+    ...hints,
     '',
-    'Rank by relevance, with the strongest buying or searching intent first. Only include threads whose URL appeared in your search results. Return JSON matching the schema.',
+    `${ranking} Only include threads whose URL appeared in your search results. Return JSON matching the schema.`,
   ].join('\n');
 }
 
-const hostMatches = (hostname, domains) =>
-  domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+const hostMatches = (hostname, domains) => domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+
+/** Which of the given forums a URL belongs to, or null. */
+export const forumForUrl = (url, forums) => forums.find((f) => hostMatches(url.hostname, f.domains)) ?? null;
 
 const dedupeKey = (url) => `${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}`.toLowerCase();
 
@@ -84,10 +94,10 @@ const parseContentJson = (content) => {
 };
 
 /**
- * Turns a Perplexity chat completion into a ranked, filtered list of threads.
- * Exported for testing.
+ * Turns a Perplexity chat completion into a ranked, filtered list of threads
+ * across the requested forums. Exported for testing.
  */
-export function parseThreadsResponse(data, { forum, threads }) {
+export function parseThreadsResponse(data, { forums, threads }) {
   const searchResults = Array.isArray(data?.search_results) ? data.search_results : [];
   const byUrl = new Map();
   for (const r of searchResults) {
@@ -123,7 +133,8 @@ export function parseThreadsResponse(data, { forum, threads }) {
       continue;
     }
     if (!/^https?:$/.test(url.protocol)) continue;
-    if (!hostMatches(url.hostname, forum.domains)) continue;
+    const forum = forumForUrl(url, forums);
+    if (!forum) continue;
     if (typeof forum.isThreadUrl === 'function' && !forum.isThreadUrl(url)) continue;
 
     const key = dedupeKey(url);
@@ -147,34 +158,36 @@ export function parseThreadsResponse(data, { forum, threads }) {
 }
 
 /**
- * Searches one forum through Perplexity's Sonar API.
+ * Searches one or more forums through Perplexity's Sonar API in a single call.
  *
  * @param {object} params
  * @param {string} params.productDescription
- * @param {object} params.forum      entry from the forum registry
- * @param {number} params.threads    max results to return
+ * @param {object[]} params.forums   entries from the forum registry
+ * @param {number} params.threads    max results to return in total
  * @param {number} params.days       how far back to look
  * @param {object} params.config     app config (see src/config.js)
  * @param {Function} [params.fetchImpl]  injectable fetch for tests
  * @param {Date} [params.now]            injectable clock for tests
  */
-export async function searchThreads({ productDescription, forum, threads, days, config, fetchImpl = fetch, now = new Date() }) {
-  const { apiKey, baseUrl, model, timeoutMs } = config.perplexity;
+export async function searchThreads({ productDescription, forums, threads, days, config, fetchImpl = fetch, now = new Date() }) {
+  const { apiKey, baseUrl, model, timeoutMs, searchContextSize } = config.perplexity;
   if (!apiKey) {
     throw new PerplexityError('Server is missing PERPLEXITY_API_KEY', { status: 500 });
   }
 
+  const domains = [...new Set(forums.flatMap((f) => f.domains))];
   const after = new Date(now.getTime() - days * DAY_MS);
   const requestBody = {
     model,
     temperature: 0.1,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ productDescription, forum, threads, days, after }) },
+      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, days, after }) },
     ],
-    search_domain_filter: forum.domains,
+    search_domain_filter: domains,
     // Perplexity rejects search_recency_filter combined with a date filter, so only the exact date is sent.
     search_after_date_filter: formatPerplexityDate(after),
+    web_search_options: { search_context_size: searchContextSize },
     return_related_questions: false,
     response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
   };
@@ -215,10 +228,11 @@ export async function searchThreads({ productDescription, forum, threads, days, 
   }
 
   return {
-    threads: parseThreadsResponse(data, { forum, threads }),
+    threads: parseThreadsResponse(data, { forums, threads }),
     meta: {
       model: data.model ?? model,
-      searchedDomains: forum.domains,
+      searchedForums: forums.map((f) => f.id),
+      searchedDomains: domains,
       after: after.toISOString(),
       usage: data.usage ?? null,
       rawResultCount: Array.isArray(data.search_results) ? data.search_results.length : 0,
