@@ -24,6 +24,9 @@ export function loadConfig(env = process.env) {
       issuer: supabaseUrl ? `${supabaseUrl}/auth/v1` : '',
       jwksUrl: supabaseUrl ? `${supabaseUrl}/auth/v1/.well-known/jwks.json` : '',
       audience: env.SUPABASE_JWT_AUDIENCE ?? 'authenticated',
+      restUrl: supabaseUrl ? `${supabaseUrl}/rest/v1` : '',
+      // Publishable (anon) key. Public; PostgREST needs it alongside the user's token.
+      anonKey: env.SUPABASE_ANON_KEY ?? '',
     },
     cors: {
       // Comma-separated list of allowed browser origins. Empty means any origin.

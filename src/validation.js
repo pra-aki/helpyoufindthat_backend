@@ -77,3 +77,57 @@ export function parseSearchRequest(source, config) {
 
   return { productDescription: description.trim(), forum, threads, days };
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function parseUuid(value, name = 'id') {
+  if (typeof value !== 'string' || !UUID_RE.test(value)) {
+    throw new HttpError(400, `"${name}" must be a UUID`, { field: name, received: value });
+  }
+  return value.toLowerCase();
+}
+
+const requiredText = (value, { name, max }) => {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new HttpError(400, `"${name}" is required and must be a non-empty string`, { field: name });
+  }
+  if (value.length > max) {
+    throw new HttpError(400, `"${name}" must be at most ${max} characters`, { field: name, max });
+  }
+  return value.trim();
+};
+
+/**
+ * Validates a product payload. Accepts camelCase or snake_case keys.
+ * Returns { name, website, description }.
+ */
+export function parseProductRequest(source) {
+  if (!source || typeof source !== 'object') {
+    throw new HttpError(400, 'Request body must be a JSON object');
+  }
+  const name = requiredText(firstDefined(source, ['name', 'productName', 'product_name']), { name: 'name', max: 200 });
+  const description = requiredText(firstDefined(source, ['description', 'productDescription', 'product_description']), {
+    name: 'description',
+    max: 2000,
+  });
+
+  let website = firstDefined(source, ['website', 'productWebsite', 'product_website', 'url']);
+  if (website !== undefined) {
+    if (typeof website !== 'string') throw new HttpError(400, '"website" must be a string', { field: 'website' });
+    website = website.trim();
+    if (website.length > 2048) throw new HttpError(400, '"website" must be at most 2048 characters', { field: 'website' });
+    if (!/^https?:\/\//i.test(website)) website = `https://${website}`;
+    let parsed;
+    try {
+      parsed = new URL(website);
+    } catch {
+      throw new HttpError(400, '"website" must be a valid URL', { field: 'website', received: source.website });
+    }
+    if (!parsed.hostname.includes('.')) throw new HttpError(400, '"website" must be a valid URL', { field: 'website', received: source.website });
+    website = parsed.href;
+  } else {
+    website = null;
+  }
+
+  return { name, website, description };
+}

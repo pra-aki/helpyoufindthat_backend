@@ -86,6 +86,30 @@ Response:
 
 Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
 
+### `POST /api/products`
+
+Stores a product for the signed-in user. Requires the Supabase bearer token.
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | yes | up to 200 chars. Also `productName` / `product_name`. |
+| `description` | yes | up to 2000 chars. Also `productDescription` / `product_description`. |
+| `website` | no | normalised to a full URL (`acme.com` becomes `https://acme.com/`). Also `productWebsite` / `product_website`. |
+
+```bash
+curl -s https://helpyoufindthat-backend.onrender.com/api/products \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"FollowUp","website":"followup.app","description":"Reminds small-business owners to follow up with leads"}'
+```
+
+Returns `201` with `{ "product": { "id", "name", "website", "description", "userId", "createdAt", "updatedAt" } }`.
+
+### `GET /api/products` and `GET /api/products/:id`
+
+List the caller's products (newest first) or fetch one. Products belong to the user who created them; row-level security in Postgres means other users' products are invisible, so a foreign id returns 404.
+
+The backend talks to Supabase's REST endpoint with the caller's own token, so no privileged database key is stored on the server. This needs `SUPABASE_ANON_KEY` (the publishable key) in the environment.
+
 ## How search works
 
 For each request the server makes one Perplexity chat completion with:
@@ -108,6 +132,7 @@ Results are then filtered to URLs that are actually on the forum's domain and lo
 |---|---|---|
 | `PERPLEXITY_API_KEY` | | required |
 | `SUPABASE_URL` | | required; the project URL, e.g. `https://abc.supabase.co` |
+| `SUPABASE_ANON_KEY` | | required for `/api/products`; the publishable key (public) |
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | per user |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |

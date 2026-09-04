@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { HttpError } from './errors.js';
 import { threadsRouter } from './routes/threads.js';
+import { productsRouter } from './routes/products.js';
+import { createSupabaseRest } from './services/supabaseRest.js';
+import { createProductsService } from './services/products.js';
 import { createSupabaseVerifier, requireUser } from './auth/supabase.js';
 import { rateLimit } from './middleware/rateLimit.js';
 
@@ -10,8 +13,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {object} deps.config
  * @param {Function} [deps.search]   injectable thread search (tests)
  * @param {Function} [deps.verify]   injectable token verifier (tests)
+ * @param {object} [deps.products]   injectable products service (tests)
  */
-export function createApp({ config, search, verify } = {}) {
+export function createApp({ config, search, verify, products } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -27,10 +31,13 @@ export function createApp({ config, search, verify } = {}) {
 
   const verifyToken = verify ?? createSupabaseVerifier(config.supabase);
   const limiter = rateLimit({ perMinute: config.rateLimit.perMinute });
-  const protect = [requireUser(verifyToken), limiter];
+  const authenticate = requireUser(verifyToken);
+  const protect = [authenticate, limiter];
+  const productsService = products ?? createProductsService(createSupabaseRest(config.supabase));
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/api', threadsRouter({ config, search, protect }));
+  app.use('/api', productsRouter({ products: productsService, protect: [authenticate] }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });
