@@ -1,14 +1,36 @@
 import express from 'express';
+import cors from 'cors';
 import { HttpError } from './errors.js';
 import { threadsRouter } from './routes/threads.js';
+import { createSupabaseVerifier, requireUser } from './auth/supabase.js';
+import { rateLimit } from './middleware/rateLimit.js';
 
-export function createApp({ config, search } = {}) {
+/**
+ * @param {object} deps
+ * @param {object} deps.config
+ * @param {Function} [deps.search]   injectable thread search (tests)
+ * @param {Function} [deps.verify]   injectable token verifier (tests)
+ */
+export function createApp({ config, search, verify } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
+  app.use(
+    cors({
+      origin: config.cors.origins.length ? config.cors.origins : true,
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Authorization', 'Content-Type'],
+      maxAge: 600,
+    }),
+  );
   app.use(express.json({ limit: '64kb' }));
 
+  const verifyToken = verify ?? createSupabaseVerifier(config.supabase);
+  const limiter = rateLimit({ perMinute: config.rateLimit.perMinute });
+  const protect = [requireUser(verifyToken), limiter];
+
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-  app.use('/api', threadsRouter({ config, search }));
+  app.use('/api', threadsRouter({ config, search, protect }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });
@@ -22,5 +44,6 @@ export function createApp({ config, search } = {}) {
     res.status(status).json({ error: { message, ...(err.details ? { details: err.details } : {}) } });
   });
 
+  app.locals.stop = () => limiter.stop();
   return app;
 }

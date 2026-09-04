@@ -6,11 +6,30 @@ Express API that finds public forum threads where people are looking for a solut
 
 ```bash
 npm install
-cp .env.example .env   # then put your Perplexity key in PERPLEXITY_API_KEY
+cp .env.example .env   # set PERPLEXITY_API_KEY and SUPABASE_URL
 npm start              # http://localhost:3000
 ```
 
 `npm run dev` restarts on file changes. `npm test` runs the test suite (no network or API key needed).
+
+## Authentication
+
+`/api/threads` is meant to be called from a browser by users who have signed in with Supabase Auth. Send the user's Supabase access token as a bearer token:
+
+```js
+const { data: { session } } = await supabase.auth.getSession();
+const res = await fetch('https://helpyoufindthat-backend.onrender.com/api/threads', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+  body: JSON.stringify({ productDescription: '...', forum: 'reddit' }),
+});
+```
+
+The server verifies the token's signature against the project's public JWKS endpoint (`SUPABASE_URL/auth/v1/.well-known/jwks.json`), plus its issuer, audience, and expiry. No shared secret is involved, so nothing sensitive ships to the browser. Missing or invalid tokens get 401; anonymous Supabase sessions get 403.
+
+Each user is limited to `RATE_LIMIT_PER_MINUTE` searches per minute (default 20); over that returns 429 with a `Retry-After` header. `/health` and `/api/forums` are public.
+
+Set `CORS_ORIGINS` to your front end's origin(s) in production. When it's empty any origin is accepted, which is convenient for local development and safe only because the token, not the origin, is what grants access.
 
 ## API
 
@@ -54,7 +73,7 @@ Response:
 }
 ```
 
-Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 429 when Perplexity rate-limits, 502/504 for upstream failures, and 500 if the API key is missing.
+Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
 
 ## How search works
 
@@ -77,6 +96,9 @@ Results are then filtered to URLs that are actually on the forum's domain and lo
 | Variable | Default | |
 |---|---|---|
 | `PERPLEXITY_API_KEY` | | required |
+| `SUPABASE_URL` | | required; the project URL, e.g. `https://abc.supabase.co` |
+| `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
+| `RATE_LIMIT_PER_MINUTE` | `20` | per user |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |
 | `PERPLEXITY_BASE_URL` | `https://api.perplexity.ai` | override for testing against a mock |
 | `PERPLEXITY_TIMEOUT_MS` | `60000` | |
