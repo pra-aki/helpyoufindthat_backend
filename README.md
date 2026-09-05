@@ -21,7 +21,7 @@ const { data: { session } } = await supabase.auth.getSession();
 const res = await fetch('https://helpyoufindthat-backend.onrender.com/api/threads', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-  body: JSON.stringify({ productDescription: '...', forum: 'reddit' }),
+  body: JSON.stringify({ productId: '<uuid from POST /api/products>', forum: 'reddit' }),
 });
 ```
 
@@ -33,7 +33,7 @@ The server verifies the token's signature against the project's public JWKS endp
 npm run token -- you@example.com 'a-password' --signup   # creates the user; drop --signup afterwards
 TOKEN=$(npm run -s token -- you@example.com 'a-password')
 curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"productDescription":"An app that reminds small-business owners to follow up with leads","forum":"reddit","threads":5,"days":7}'
+  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":5,"days":7}'
 ```
 
 This needs `SUPABASE_ANON_KEY` in `.env` (the project's public client key, found under Project Settings > API Keys). If email confirmation is enabled in your Supabase auth settings, confirm the test user in the dashboard before signing in.
@@ -52,28 +52,27 @@ Lists supported forums with their ids, aliases, and searched domains.
 
 | Parameter | Required | Default | Notes |
 |---|---|---|---|
-| `productDescription` | yes | | What the product does. Max 2000 chars. Also accepted as `product_description` or `description`. |
+| `productId` | yes | | UUID of one of your products (see `POST /api/products`). Its stored description drives the search, and the results are stored under it. |
+| `productDescription` | no | the product's | One-off override of the description for this search only. Max 2000 chars. |
 | `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
 | `threads` | no | 10 | Max number of threads to return in total, across all requested forums (1 to 50). Also accepted as `x` or `maxThreads`. |
 | `from` | no | | First day to include, `YYYY-MM-DD` (UTC). Also `startDate` / `start_date`. |
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
 
-| `productId` | no | | UUID of one of your products. When given, the returned threads are also stored under that product (see below). |
-
 The range from `from` to `to` may not exceed three months (92 days). Examples: `"days": 7` searches the last week; `"from": "2026-08-01", "to": "2026-08-31"` searches August; `"from": "2026-06-01"` searches from June until today.
 
 ```bash
 curl -s http://localhost:3000/api/threads \
   -H 'content-type: application/json' \
-  -d '{"productDescription":"An app that reminds small-business owners to follow up with leads","forum":"reddit","threads":5,"days":7}'
+  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":5,"days":7}'
 ```
 
 Search several forums in one call (each thread's `source` says where it came from):
 
 ```bash
 curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"productDescription":"...","forum":["reddit","hackernews","x"],"threads":10,"days":7}'
+  -d '{"productId":"'$PRODUCT_ID'","forum":["reddit","hackernews","x"],"threads":10,"days":7}'
 # or  "forum":"all"      or, with GET,  ?forum=reddit,hackernews
 ```
 
@@ -81,7 +80,7 @@ Response:
 
 ```json
 {
-  "query": { "productDescription": "...", "forums": ["reddit"], "threads": 5, "from": "2026-08-28", "to": "2026-09-04", "days": 7 },
+  "query": { "productId": "...", "productName": "...", "productDescription": "...", "forums": ["reddit"], "threads": 5, "from": "2026-08-28", "to": "2026-09-04", "days": 7 },
   "count": 3,
   "threads": [
     {
@@ -94,11 +93,12 @@ Response:
       "source": "reddit"
     }
   ],
+  "saved": { "productId": "...", "count": 3, "searchDate": "..." },
   "meta": { "model": "sonar-pro", "searchedForums": ["reddit"], "searchedDomains": ["reddit.com"], "from": "2026-08-28", "to": "2026-09-04", "usage": { }, "rawResultCount": 8 }
 }
 ```
 
-When `productId` is set, the response also carries `saved: { productId, count, searchDate }` and each thread has an `id`, the stored row's id.
+Every search is stored under its product; each thread's `id` is the stored row's id. Create the product first with `POST /api/products`.
 
 Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
 

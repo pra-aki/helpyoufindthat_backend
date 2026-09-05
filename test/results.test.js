@@ -84,7 +84,7 @@ const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_AN
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
-const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P' }; }, list: async () => [], create: async () => ({}) };
+const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'stored description' }; }, list: async () => [], create: async () => ({}) };
 let searchCalls = 0;
 const fakeSearch = async () => { searchCalls++; return { threads: [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews' })], meta: { model: 'fake' } }; };
 const saved = [];
@@ -98,29 +98,30 @@ after(() => server.close());
 const auth = { authorization: 'Bearer good' };
 const post = (body) => fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });
 
-test('search without productId is stateless: nothing saved, saved is null', async () => {
-  const body = await (await post({ productDescription: 'd', forum: 'reddit' })).json();
-  assert.equal(body.saved, null);
-  assert.equal(body.query.productId, null);
+test('search without productId is rejected', async () => {
+  const res = await post({ forum: 'reddit' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /productId/);
   assert.equal(saved.length, 0);
 });
 
-test('search with productId stores the threads and returns their ids', async () => {
-  const res = await post({ productDescription: 'd', forum: 'reddit', productId: PID });
+test('search with productId uses the stored description, stores the threads, and returns their ids', async () => {
+  const res = await post({ forum: 'reddit', productId: PID });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.deepEqual(body.saved && { productId: body.saved.productId, count: body.saved.count }, { productId: PID, count: 2 });
   assert.ok(body.saved.searchDate);
   assert.deepEqual(body.threads.map((t) => t.id), ['r0', 'r1']);
+  assert.equal(body.query.productDescription, 'stored description');
   assert.equal(saved.length, 2);
 });
 
 test('search with an unknown productId is a 404 before Perplexity is called', async () => {
   const before = searchCalls;
-  const res = await post({ productDescription: 'd', forum: 'reddit', productId: OTHER });
+  const res = await post({ forum: 'reddit', productId: OTHER });
   assert.equal(res.status, 404);
   assert.equal(searchCalls, before);
-  assert.equal((await post({ productDescription: 'd', forum: 'reddit', productId: 'nope' })).status, 400);
+  assert.equal((await post({ forum: 'reddit', productId: 'nope' })).status, 400);
 });
 
 test('GET /api/products/:id/results pages stored results and 404s for foreign products', async () => {
