@@ -39,7 +39,9 @@ export const formatPerplexityDate = (date) => {
 
 const joinNames = (names) => (names.length <= 1 ? names[0] ?? '' : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
-export function buildUserPrompt({ productDescription, forums, threads, days, after }) {
+const isoDay = (date) => date.toISOString().slice(0, 10);
+
+export function buildUserPrompt({ productDescription, forums, threads, from, to }) {
   const single = forums.length === 1;
   const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
   const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
@@ -52,7 +54,7 @@ export function buildUserPrompt({ productDescription, forums, threads, days, aft
     productDescription,
     '"""',
     '',
-    `Find up to ${threads} ${where} posted within the last ${days} day${days === 1 ? '' : 's'} (on or after ${after.toISOString().slice(0, 10)}) where the poster is looking for a solution like the product described above.`,
+    `Find up to ${threads} ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where the poster is looking for a solution like the product described above.`,
     'Strong signals: asking for recommendations or alternatives, asking how to solve the underlying problem, "is there a tool that ...", or frustration that no good solution exists.',
     '',
     ...hints,
@@ -164,29 +166,31 @@ export function parseThreadsResponse(data, { forums, threads }) {
  * @param {string} params.productDescription
  * @param {object[]} params.forums   entries from the forum registry
  * @param {number} params.threads    max results to return in total
- * @param {number} params.days       how far back to look
+ * @param {Date} params.from         first day to include (UTC)
+ * @param {Date} params.to           last day to include (UTC)
  * @param {object} params.config     app config (see src/config.js)
  * @param {Function} [params.fetchImpl]  injectable fetch for tests
  * @param {Date} [params.now]            injectable clock for tests
  */
-export async function searchThreads({ productDescription, forums, threads, days, config, fetchImpl = fetch, now = new Date() }) {
+export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
   const { apiKey, baseUrl, model, timeoutMs, searchContextSize } = config.perplexity;
   if (!apiKey) {
     throw new PerplexityError('Server is missing PERPLEXITY_API_KEY', { status: 500 });
   }
 
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
-  const after = new Date(now.getTime() - days * DAY_MS);
   const requestBody = {
     model,
     temperature: 0.1,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, days, after }) },
+      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
     ],
     search_domain_filter: domains,
-    // Perplexity rejects search_recency_filter combined with a date filter, so only the exact date is sent.
-    search_after_date_filter: formatPerplexityDate(after),
+    // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.
+    // The "before" filter is exclusive, so the day after "to" makes the range inclusive.
+    search_after_date_filter: formatPerplexityDate(from),
+    search_before_date_filter: formatPerplexityDate(new Date(to.getTime() + DAY_MS)),
     web_search_options: { search_context_size: searchContextSize },
     return_related_questions: false,
     response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
@@ -233,7 +237,8 @@ export async function searchThreads({ productDescription, forums, threads, days,
       model: data.model ?? model,
       searchedForums: forums.map((f) => f.id),
       searchedDomains: domains,
-      after: after.toISOString(),
+      from: isoDay(from),
+      to: isoDay(to),
       usage: data.usage ?? null,
       rawResultCount: Array.isArray(data.search_results) ? data.search_results.length : 0,
     },

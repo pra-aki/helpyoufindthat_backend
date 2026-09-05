@@ -57,7 +57,13 @@ test('POST /api/threads with a valid token returns results, echoes defaults, and
   const res = await post({ productDescription: 'A tool that finds parking', forum: 'Reddit' }, auth);
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.deepEqual(body.query, { productDescription: 'A tool that finds parking', forums: ['reddit'], threads: 10, days: 1 });
+  assert.equal(body.query.productDescription, 'A tool that finds parking');
+  assert.deepEqual(body.query.forums, ['reddit']);
+  assert.equal(body.query.threads, 10);
+  assert.equal(body.query.days, 1);
+  assert.match(body.query.from, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(body.query.to, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(lastSearchArgs.from instanceof Date && lastSearchArgs.to instanceof Date);
   assert.equal(body.count, 1);
   assert.deepEqual(lastSearchArgs.forums.map((f) => f.id), ['reddit']);
   assert.equal(lastSearchArgs.user.id, 'user-1');
@@ -67,7 +73,19 @@ test('GET /api/threads accepts query-string parameters including x and y', async
   const qs = new URLSearchParams({ productDescription: 'desc', forum: 'hacknews', x: '4', y: '14' });
   const res = await fetch(`${base}/api/threads?${qs}`, { headers: auth });
   assert.equal(res.status, 200);
-  assert.deepEqual((await res.json()).query, { productDescription: 'desc', forums: ['hackernews'], threads: 4, days: 14 });
+  const q = (await res.json()).query;
+  assert.deepEqual([q.forums, q.threads, q.days], [['hackernews'], 4, 14]);
+});
+
+test('GET /api/threads accepts an explicit from/to range', async () => {
+  const fresh = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify }).listen(0);
+  await new Promise((r) => fresh.once('listening', r));
+  const qs = new URLSearchParams({ productDescription: 'desc', forum: 'reddit', from: '2026-01-01', to: '2026-01-31' });
+  const res = await fetch(`http://127.0.0.1:${fresh.address().port}/api/threads?${qs}`, { headers: auth });
+  assert.equal(res.status, 200);
+  const q = (await res.json()).query;
+  assert.deepEqual([q.from, q.to, q.days], ['2026-01-01', '2026-01-31', 30]);
+  fresh.close();
 });
 
 test('forum accepts a JSON array in POST and a comma list in GET', async () => {

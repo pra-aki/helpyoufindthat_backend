@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { listForums } from '../forums/index.js';
-import { parseSearchRequest } from '../validation.js';
+import { parseSearchRequest, isoDay } from '../validation.js';
 import { searchThreads } from '../services/perplexity.js';
 
 /**
@@ -24,6 +24,8 @@ export function threadsRouter({ config, search = searchThreads, protect = [] }) 
         productDescription: params.productDescription,
         forums: params.forums.map((f) => f.id),
         threads: params.threads,
+        from: isoDay(params.from),
+        to: isoDay(params.to),
         days: params.days,
       },
       count: threads.length,
@@ -32,10 +34,11 @@ export function threadsRouter({ config, search = searchThreads, protect = [] }) 
     });
   };
 
-  // POST /api/threads  { "productDescription": "...", "forum": "reddit" | ["reddit","hackernews"] | "all", "threads": 10, "days": 1 }
+  // POST /api/threads  { "productDescription": "...", "forum": "reddit" | ["reddit","hackernews"] | "all",
+  //                      "threads": 10, "from": "2026-08-01", "to": "2026-08-31" }   (or "days": 7 for the last week)
   router.post('/threads', ...protect, async (req, res) => handleSearch(req, req.body, res));
 
-  // GET /api/threads?productDescription=...&forum=reddit,hackernews&threads=10&days=1
+  // GET /api/threads?productDescription=...&forum=reddit,hackernews&threads=10&from=2026-08-01&to=2026-08-31
   router.get('/threads', ...protect, async (req, res) => handleSearch(req, req.query, res));
 
   return router;

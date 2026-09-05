@@ -55,7 +55,11 @@ Lists supported forums with their ids, aliases, and searched domains.
 | `productDescription` | yes | | What the product does. Max 2000 chars. Also accepted as `product_description` or `description`. |
 | `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
 | `threads` | no | 10 | Max number of threads to return in total, across all requested forums (1 to 50). Also accepted as `x` or `maxThreads`. |
-| `days` | no | 1 | Only threads posted within the last N days (1 to 365). Also accepted as `y`. |
+| `from` | no | | First day to include, `YYYY-MM-DD` (UTC). Also `startDate` / `start_date`. |
+| `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
+| `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
+
+The range from `from` to `to` may not exceed one year (365 days). Examples: `"days": 7` searches the last week; `"from": "2026-08-01", "to": "2026-08-31"` searches August; `"from": "2026-06-01"` searches from June until today.
 
 ```bash
 curl -s http://localhost:3000/api/threads \
@@ -75,7 +79,7 @@ Response:
 
 ```json
 {
-  "query": { "productDescription": "...", "forums": ["reddit"], "threads": 5, "days": 7 },
+  "query": { "productDescription": "...", "forums": ["reddit"], "threads": 5, "from": "2026-08-28", "to": "2026-09-04", "days": 7 },
   "count": 3,
   "threads": [
     {
@@ -88,7 +92,7 @@ Response:
       "source": "reddit"
     }
   ],
-  "meta": { "model": "sonar-pro", "searchedForums": ["reddit"], "searchedDomains": ["reddit.com"], "after": "...", "usage": { }, "rawResultCount": 8 }
+  "meta": { "model": "sonar-pro", "searchedForums": ["reddit"], "searchedDomains": ["reddit.com"], "from": "2026-08-28", "to": "2026-09-04", "usage": { }, "rawResultCount": 8 }
 }
 ```
 
@@ -124,7 +128,7 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 
 - `search_domain_filter` restricted to the requested forums' domains
 - `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, useful for multi-forum searches, at a higher cost)
-- `search_after_date_filter` set to today minus `days` (Perplexity does not allow combining it with `search_recency_filter`)
+- `search_after_date_filter` and `search_before_date_filter` set from the requested range (Perplexity does not allow combining these with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
 Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`.

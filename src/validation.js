@@ -53,17 +53,63 @@ export function parseForums(input) {
   return resolved;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const utcDay = (date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+export const isoDay = (date) => date.toISOString().slice(0, 10);
+
+const parseDate = (value, name) => {
+  if (value === undefined) return undefined;
+  const str = String(value).trim();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(str) ? new Date(`${str}T00:00:00Z`) : new Date(str);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new HttpError(400, `"${name}" must be a date like 2026-09-04`, { field: name, received: value });
+  }
+  return utcDay(parsed);
+};
+
+/**
+ * Resolves the search window to whole UTC days, inclusive on both ends.
+ *
+ *   from + to      explicit range
+ *   from only      from .. today
+ *   to only        (to - days) .. to
+ *   neither        (today - days) .. today, days defaulting to 1
+ *
+ * The range may not exceed config.limits.maxDays (one year) or end in the future.
+ */
+export function parseDateRange(source, config, { now = new Date() } = {}) {
+  const today = utcDay(now);
+  const maxDays = config.limits.maxDays;
+
+  const daysInput = firstDefined(source, ['days', 'y']);
+  const days = toPositiveInt(daysInput, { name: 'days', fallback: config.defaults.days, max: maxDays });
+  let from = parseDate(firstDefined(source, ['from', 'startDate', 'start_date', 'dateFrom', 'date_from']), 'from');
+  let to = parseDate(firstDefined(source, ['to', 'endDate', 'end_date', 'dateTo', 'date_to']), 'to');
+
+  if (to === undefined) to = today;
+  if (from === undefined) from = new Date(to.getTime() - days * DAY_MS);
+
+  if (to > today) throw new HttpError(400, '"to" cannot be in the future', { field: 'to', received: isoDay(to), today: isoDay(today) });
+  if (from > to) throw new HttpError(400, '"from" must be on or before "to"', { from: isoDay(from), to: isoDay(to) });
+  const spanDays = Math.round((to - from) / DAY_MS);
+  if (spanDays > maxDays) {
+    throw new HttpError(400, `Date range may not exceed ${maxDays} days`, { from: isoDay(from), to: isoDay(to), spanDays, maxDays });
+  }
+  return { from, to, days: spanDays };
+}
+
 /**
  * Accepts the request body (POST) or query string (GET) and returns
- * { productDescription, forums, threads, days }.
+ * { productDescription, forums, threads, from, to, days }.
  *
  * Accepted parameter spellings:
  *   productDescription | product_description | description
  *   forum | forums | forumName | forum_name   (id, list of ids, comma-separated ids, or "all")
  *   threads | x | maxThreads | max_threads
- *   days | y
+ *   from | startDate | start_date, to | endDate | end_date   (YYYY-MM-DD, inclusive)
+ *   days | y                                                (shortcut: the last N days)
  */
-export function parseSearchRequest(source, config) {
+export function parseSearchRequest(source, config, { now = new Date() } = {}) {
   if (!source || typeof source !== 'object') {
     throw new HttpError(400, 'Request must contain parameters');
   }
@@ -88,13 +134,9 @@ export function parseSearchRequest(source, config) {
     fallback: config.defaults.threads,
     max: config.limits.maxThreads,
   });
-  const days = toPositiveInt(firstDefined(source, ['days', 'y']), {
-    name: 'days',
-    fallback: config.defaults.days,
-    max: config.limits.maxDays,
-  });
+  const { from, to, days } = parseDateRange(source, config, { now });
 
-  return { productDescription: description.trim(), forums, threads, days };
+  return { productDescription: description.trim(), forums, threads, from, to, days };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

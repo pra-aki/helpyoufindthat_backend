@@ -29,14 +29,17 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
     captured = { url, init, body: JSON.parse(init.body) };
     return jsonResponse(completion([]));
   };
-  const now = new Date('2026-09-02T12:00:00Z');
-  await searchThreads({ productDescription: 'A tool that does X', forums: [reddit], threads: 3, days: 7, config, fetchImpl, now });
+  const from = new Date('2026-08-26T00:00:00Z');
+  const to = new Date('2026-09-02T00:00:00Z');
+  await searchThreads({ productDescription: 'A tool that does X', forums: [reddit], threads: 3, from, to, config, fetchImpl });
 
   assert.equal(captured.url, 'https://pplx.test/chat/completions');
   assert.equal(captured.init.headers.Authorization, 'Bearer test-key');
   assert.deepEqual(captured.body.search_domain_filter, ['reddit.com']);
   assert.equal(captured.body.search_after_date_filter, '08/26/2026');
+  assert.equal(captured.body.search_before_date_filter, '09/03/2026', 'day after "to", since the before filter is exclusive');
   assert.equal(captured.body.search_recency_filter, undefined, 'Perplexity rejects recency + date filters together');
+  assert.match(captured.body.messages[1].content, /posted between 2026-08-26 and 2026-09-02 \(inclusive\)/);
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[1].content, /A tool that does X/);
   assert.match(captured.body.messages[1].content, /up to 3 public Reddit threads/);
@@ -57,13 +60,15 @@ test('multi-forum search sends the union of domains in one call and tags each th
       ]),
     );
   };
-  const { threads, meta } = await searchThreads({ productDescription: 'd', forums: [reddit, hn, x], threads: 10, days: 1, config, fetchImpl });
+  const day = new Date('2026-09-04T00:00:00Z');
+  const { threads, meta } = await searchThreads({ productDescription: 'd', forums: [reddit, hn, x], threads: 10, from: day, to: day, config, fetchImpl });
   assert.deepEqual(captured.search_domain_filter, ['reddit.com', 'news.ycombinator.com', 'x.com', 'twitter.com']);
   assert.match(captured.messages[1].content, /public threads on Reddit, Hacker News and X \(Twitter\)/);
   assert.match(captured.messages[1].content, /do not favour one site over another/);
   assert.match(captured.messages[1].content, /- Hacker News: /);
   assert.deepEqual(threads.map((t) => [t.title, t.source]), [['Reddit', 'reddit'], ['X', 'x'], ['HN', 'hackernews']]);
   assert.deepEqual(meta.searchedForums, ['reddit', 'hackernews', 'x']);
+  assert.deepEqual([meta.from, meta.to], ['2026-09-04', '2026-09-04']);
 });
 
 test('filters to forum domains and real thread URLs, dedupes, sorts by score, limits to x', () => {
@@ -110,7 +115,7 @@ test('parses JSON wrapped in a code fence', () => {
 });
 
 test('maps upstream failures to HTTP errors', async () => {
-  const base = { productDescription: 'd', forums: [reddit], threads: 1, days: 1, config };
+  const base = { productDescription: 'd', forums: [reddit], threads: 1, from: new Date('2026-09-03T00:00:00Z'), to: new Date('2026-09-04T00:00:00Z'), config };
   await assert.rejects(
     searchThreads({ ...base, fetchImpl: async () => jsonResponse({ error: 'nope' }, 401) }),
     (err) => err.status === 502 && /HTTP 401/.test(err.message),
