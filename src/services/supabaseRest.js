@@ -14,7 +14,7 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
       throw new HttpError(500, 'Server is missing SUPABASE_URL or SUPABASE_ANON_KEY; database access is not configured');
     }
     const url = new URL(`${restUrl}/${table}`);
-    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+    for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, v);
 
     const headers = {
       apikey: anonKey,
@@ -31,17 +31,18 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
       throw new HttpError(502, 'Could not reach the database', { reason: cause?.message });
     }
 
-    if (res.status === 204) return null;
-    const text = await res.text();
     let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { message: text };
+    if (res.status !== 204) {
+      const text = await res.text();
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { message: text };
+        }
       }
     }
-    if (res.ok) return data;
+    if (res.ok) return { data, headers: res.headers };
 
     const message = data?.message ?? data?.hint ?? `Database request failed with HTTP ${res.status}`;
     if (res.status === 401) throw new HttpError(401, 'Database rejected the session token', { reason: message });
@@ -52,9 +53,28 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
     throw new HttpError(502, `Database request failed with HTTP ${res.status}`, { reason: message });
   };
 
+  /** Parses "0-49/123" from Content-Range into a total, or null if unknown. */
+  const totalFromRange = (headers) => {
+    const m = (headers?.get?.('content-range') ?? '').match(/\/(\d+|\*)$/);
+    return m && m[1] !== '*' ? Number(m[1]) : null;
+  };
+
   return {
-    insert: (token, table, row) => request({ token, method: 'POST', table, body: row, prefer: 'return=representation', single: true }),
-    select: (token, table, query) => request({ token, table, query }),
-    selectOne: (token, table, query) => request({ token, table, query, single: true }),
+    insert: async (token, table, row) =>
+      (await request({ token, method: 'POST', table, body: row, prefer: 'return=representation', single: true })).data,
+
+    /** Insert rows, updating existing ones that collide on `onConflict` columns. Returns the stored rows. */
+    upsert: async (token, table, rows, { onConflict }) =>
+      (await request({ token, method: 'POST', table, query: { on_conflict: onConflict }, body: rows, prefer: 'resolution=merge-duplicates,return=representation' })).data ?? [],
+
+    select: async (token, table, query) => (await request({ token, table, query })).data ?? [],
+
+    selectOne: async (token, table, query) => (await request({ token, table, query, single: true })).data,
+
+    /** Like select, but also returns the total row count ignoring limit/offset. */
+    selectPage: async (token, table, query) => {
+      const { data, headers } = await request({ token, table, query, prefer: 'count=exact' });
+      return { rows: data ?? [], total: totalFromRange(headers) ?? (data ?? []).length };
+    },
   };
 }

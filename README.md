@@ -59,6 +59,8 @@ Lists supported forums with their ids, aliases, and searched domains.
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
 
+| `productId` | no | | UUID of one of your products. When given, the returned threads are also stored under that product (see below). |
+
 The range from `from` to `to` may not exceed three months (92 days). Examples: `"days": 7` searches the last week; `"from": "2026-08-01", "to": "2026-08-31"` searches August; `"from": "2026-06-01"` searches from June until today.
 
 ```bash
@@ -96,6 +98,8 @@ Response:
 }
 ```
 
+When `productId` is set, the response also carries `saved: { productId, count, searchDate }` and each thread has an `id`, the stored row's id.
+
 Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
 
 ### `POST /api/products`
@@ -119,6 +123,25 @@ Returns `201` with `{ "product": { "id", "name", "website", "description", "user
 ### `GET /api/products` and `GET /api/products/:id`
 
 List the caller's products (newest first) or fetch one. Products belong to the user who created them; row-level security in Postgres means other users' products are invisible, so a foreign id returns 404.
+
+### `GET /api/products/:id/results`
+
+Stored search results for one of your products, latest search first, then by relevance score.
+
+| Query parameter | Default | Notes |
+|---|---|---|
+| `limit` | 50 | max 1000 |
+| `offset` | 0 | for paging |
+| `source` | | filter to one forum id, e.g. `reddit` |
+| `minScore` | | only results with `relevanceScore` at or above this (0 to 1) |
+
+```bash
+curl -s "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results?limit=100&source=reddit" -H "Authorization: Bearer $TOKEN"
+```
+
+Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, createdAt } ], count, total, limit, offset }`. `total` is the number of matching rows regardless of paging.
+
+**How storage works.** A thread is stored once per product, keyed on the link. If a later search returns the same thread again, its row is updated in place: `searchDate` moves to the latest search and the score, title, and summary are refreshed. Nothing is ever duplicated, and no result is excluded from a search because it was seen before. The search itself is stateless; to get different threads, change the product description.
 
 The backend talks to Supabase's REST endpoint with the caller's own token, so no privileged database key is stored on the server. This needs `SUPABASE_ANON_KEY` (the publishable key) in the environment.
 

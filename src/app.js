@@ -5,6 +5,7 @@ import { threadsRouter } from './routes/threads.js';
 import { productsRouter } from './routes/products.js';
 import { createSupabaseRest } from './services/supabaseRest.js';
 import { createProductsService } from './services/products.js';
+import { createResultsService } from './services/results.js';
 import { createSupabaseVerifier, requireUser } from './auth/supabase.js';
 import { rateLimit } from './middleware/rateLimit.js';
 
@@ -14,8 +15,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {Function} [deps.search]   injectable thread search (tests)
  * @param {Function} [deps.verify]   injectable token verifier (tests)
  * @param {object} [deps.products]   injectable products service (tests)
+ * @param {object} [deps.results]    injectable results service (tests)
  */
-export function createApp({ config, search, verify, products } = {}) {
+export function createApp({ config, search, verify, products, results } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -33,11 +35,13 @@ export function createApp({ config, search, verify, products } = {}) {
   const limiter = rateLimit({ perMinute: config.rateLimit.perMinute });
   const authenticate = requireUser(verifyToken);
   const protect = [authenticate, limiter];
-  const productsService = products ?? createProductsService(createSupabaseRest(config.supabase));
+  const db = createSupabaseRest(config.supabase);
+  const productsService = products ?? createProductsService(db);
+  const resultsService = results ?? createResultsService(db);
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-  app.use('/api', threadsRouter({ config, search, protect }));
-  app.use('/api', productsRouter({ products: productsService, protect: [authenticate] }));
+  app.use('/api', threadsRouter({ config, search, products: productsService, results: resultsService, protect }));
+  app.use('/api', productsRouter({ products: productsService, results: resultsService, protect: [authenticate] }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });

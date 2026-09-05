@@ -192,3 +192,37 @@ export function parseProductRequest(source) {
 
   return { name, website, description };
 }
+
+/**
+ * Query parameters for listing stored results:
+ *   limit (default 50, max 1000), offset (default 0), source (forum id), minScore (0..1)
+ */
+export function parseResultsQuery(source, { defaultLimit = 50, maxLimit = 1000 } = {}) {
+  const limit = toPositiveInt(firstDefined(source, ['limit', 'pageSize', 'page_size']), { name: 'limit', fallback: defaultLimit, max: maxLimit });
+
+  const offsetRaw = firstDefined(source, ['offset', 'skip']);
+  let offset = 0;
+  if (offsetRaw !== undefined) {
+    const n = typeof offsetRaw === 'number' ? offsetRaw : Number(String(offsetRaw).trim());
+    if (!Number.isInteger(n) || n < 0) throw new HttpError(400, '"offset" must be a non-negative integer', { field: 'offset', received: offsetRaw });
+    offset = n;
+  }
+
+  let sourceId;
+  const sourceRaw = firstDefined(source, ['source', 'forum', 'sourceSite', 'source_site']);
+  if (sourceRaw !== undefined) {
+    const forum = typeof sourceRaw === 'string' ? getForum(sourceRaw) : null;
+    if (!forum) throw new HttpError(400, `Unsupported source "${sourceRaw}"`, { field: 'source', supported: listForums().map((f) => f.id) });
+    sourceId = forum.id;
+  }
+
+  let minScore;
+  const minRaw = firstDefined(source, ['minScore', 'min_score']);
+  if (minRaw !== undefined) {
+    const n = typeof minRaw === 'number' ? minRaw : Number(String(minRaw).trim());
+    if (!Number.isFinite(n) || n < 0 || n > 1) throw new HttpError(400, '"minScore" must be a number between 0 and 1', { field: 'minScore', received: minRaw });
+    minScore = n;
+  }
+
+  return { limit, offset, source: sourceId, minScore };
+}
