@@ -75,7 +75,7 @@ const parseDate = (value, name) => {
  *   to only        (to - days) .. to
  *   neither        (today - days) .. today, days defaulting to 1
  *
- * The range may not exceed config.limits.maxDays (one year) or end in the future.
+ * The range may not exceed config.limits.maxDays (three months) or end in the future.
  */
 export function parseDateRange(source, config, { now = new Date() } = {}) {
   const today = utcDay(now);

@@ -53,6 +53,7 @@ test('rejects missing or invalid input with 400s', () => {
   rejects({ productDescription: 'desc', forum: 'reddit', threads: 0 }, /threads/);
   rejects({ productDescription: 'desc', forum: 'reddit', threads: 2.5 }, /threads/);
   rejects({ productDescription: 'desc', forum: 'reddit', threads: 999 }, /at most/);
+  rejects({ productDescription: 'desc', forum: 'reddit', days: 93 }, /at most 92/);
   rejects({ productDescription: 'desc', forum: 'reddit', days: 'soon' }, /days/);
   rejects({ productDescription: 'x'.repeat(2001), forum: 'reddit' }, /at most 2000/);
 });
@@ -84,7 +85,8 @@ test('date range: rejects bad dates, future end, reversed range, and spans over 
   bad({ from: 'yesterday' }, /"from" must be a date/);
   bad({ to: '2026-09-05' }, /future/);
   bad({ from: '2026-09-02', to: '2026-09-01' }, /on or before/);
-  bad({ from: '2025-09-03', to: '2026-09-04' }, /exceed 365 days/);
-  assert.deepEqual(range({ from: '2025-09-04', to: '2026-09-04' }), ['2025-09-04', '2026-09-04', 365], 'exactly one year is allowed');
-  bad({ days: 400 }, /at most 365/);
+  bad({ from: '2026-06-03', to: '2026-09-04' }, /exceed 92 days/);
+  assert.deepEqual(range({ from: '2026-06-04', to: '2026-09-04' }), ['2026-06-04', '2026-09-04', 92], 'exactly 92 days is allowed');
+  assert.deepEqual(range({ from: '2026-06-01', to: '2026-08-31' }), ['2026-06-01', '2026-08-31', 91], 'three calendar months fit');
+  bad({ days: 100 }, /at most 92/);
 });

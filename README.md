@@ -59,7 +59,7 @@ Lists supported forums with their ids, aliases, and searched domains.
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
 
-The range from `from` to `to` may not exceed one year (365 days). Examples: `"days": 7` searches the last week; `"from": "2026-08-01", "to": "2026-08-31"` searches August; `"from": "2026-06-01"` searches from June until today.
+The range from `from` to `to` may not exceed three months (92 days). Examples: `"days": 7` searches the last week; `"from": "2026-08-01", "to": "2026-08-31"` searches August; `"from": "2026-06-01"` searches from June until today.
 
 ```bash
 curl -s http://localhost:3000/api/threads \
