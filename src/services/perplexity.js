@@ -3,14 +3,20 @@ import { PerplexityError } from '../errors.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SYSTEM_PROMPT = [
-  'You are a research assistant that finds public online discussions where people are actively looking for a solution, tool, or product.',
+  'You find potential customers: people posting in public forums who have a problem and are asking for help, a tool, or a recommendation.',
+  'You are looking for demand, not supply. A thread only counts if its author is seeking a solution.',
+  'Threads that present, promote, launch, review, compare, or explain solutions are not leads and must be left out, even when they are about the exact product category.',
   'You only report real threads whose URLs appear in your search results. Never invent, guess, or alter URLs.',
-  'If you find nothing relevant, return an empty list.',
+  'If you find nothing that qualifies, return an empty list rather than padding it with weaker matches.',
 ].join(' ');
 
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
+    problem: {
+      type: 'string',
+      description: 'One sentence: the problem a person would have that this product solves, in the words such a person would use',
+    },
     threads: {
       type: 'array',
       items: {
@@ -18,16 +24,25 @@ const RESPONSE_SCHEMA = {
         properties: {
           title: { type: 'string', description: 'Title of the thread or opening post' },
           url: { type: 'string', description: 'Exact URL of the thread, copied from search results' },
-          summary: { type: 'string', description: 'One or two sentences describing what the poster is asking for' },
-          why_relevant: { type: 'string', description: 'Why this thread indicates demand for the described product' },
+          intent: {
+            type: 'string',
+            enum: ['seeking', 'offering', 'discussion'],
+            description: 'seeking = the author is asking for help, a tool, or a recommendation; offering = the author presents, promotes, reviews, or explains a solution; discussion = neither',
+          },
+          asks_for: { type: 'string', description: 'What the author is asking for, in a few words; empty if intent is not seeking' },
+          summary: { type: 'string', description: 'One or two sentences describing the situation the author describes' },
+          why_relevant: { type: 'string', description: 'Why this person is a potential customer for the described product' },
           posted_at: { type: 'string', description: 'When it was posted, as ISO 8601 date if known, otherwise empty string' },
-          relevance_score: { type: 'number', description: 'Relevance from 0 (weak) to 1 (strong buying/searching intent)' },
+          relevance_score: {
+            type: 'number',
+            description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; below 0.3 = tangential',
+          },
         },
-        required: ['title', 'url', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
+        required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
       },
     },
   },
-  required: ['threads'],
+  required: ['problem', 'threads'],
 };
 
 /** Perplexity date filters use MM/DD/YYYY. */
@@ -46,16 +61,25 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
   const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
   const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
   const ranking = single
-    ? 'Rank by relevance, with the strongest buying or searching intent first.'
-    : 'Rank by relevance across all sites together, with the strongest buying or searching intent first; do not favour one site over another.';
+    ? 'Rank by how strongly the author is seeking something like this product.'
+    : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
   return [
-    'Product description:',
+    'We sell this product:',
     '"""',
     productDescription,
     '"""',
     '',
-    `Find up to ${threads} ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where the poster is looking for a solution like the product described above.`,
-    'Strong signals: asking for recommendations or alternatives, asking how to solve the underlying problem, "is there a tool that ...", or frustration that no good solution exists.',
+    'First, state the problem a potential customer would have, in the words they would use when asking for help (the "problem" field).',
+    `Then find up to ${threads} ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) written by people who HAVE that problem and are ASKING for a solution: a recommendation, a tool, a service, an alternative, or advice on how to handle it.`,
+    '',
+    'Search the way those people write, for example: "looking for a tool that", "any recommendations for", "how do you all handle", "is there an app that", "struggling with", "what do you use for", "alternative to".',
+    '',
+    'Include only threads where the author is seeking. Exclude:',
+    '- product launches, announcements, "I built", "Show HN", "check out my", or anything promoting a solution',
+    '- reviews, comparisons, "best tools for" lists, tutorials, how-to guides, news, and opinion pieces',
+    '- posts where the author already has a solution and is sharing or explaining it',
+    '- general discussion of the topic with no request in it',
+    'Threads like these are still "offering" or "discussion" even if the topic matches the product exactly.',
     '',
     ...hints,
     '',
@@ -99,6 +123,11 @@ const parseContentJson = (content) => {
  * Turns a Perplexity chat completion into a ranked, filtered list of threads
  * across the requested forums. Exported for testing.
  */
+export const problemStatementFrom = (data) => {
+  const parsed = parseContentJson(data?.choices?.[0]?.message?.content);
+  return typeof parsed?.problem === 'string' && parsed.problem.trim() ? parsed.problem.trim() : null;
+};
+
 export function parseThreadsResponse(data, { forums, threads }) {
   const searchResults = Array.isArray(data?.search_results) ? data.search_results : [];
   const byUrl = new Map();
@@ -143,10 +172,14 @@ export function parseThreadsResponse(data, { forums, threads }) {
     if (seen.has(key)) continue;
     seen.add(key);
 
+    // The model labels each thread's intent; anything that isn't someone seeking a solution is not a lead.
+    if (typeof item.intent === 'string' && item.intent !== 'seeking') continue;
+
     const fromSearch = byUrl.get(key);
     results.push({
       title: String(item.title ?? fromSearch?.title ?? '').trim(),
       url: url.href,
+      asksFor: String(item.asks_for ?? '').trim() || null,
       summary: String(item.summary ?? '').trim(),
       whyRelevant: String(item.why_relevant ?? '').trim(),
       postedAt: String(item.posted_at || fromSearch?.date || '').trim() || null,
@@ -235,6 +268,7 @@ export async function searchThreads({ productDescription, forums, threads, from,
     threads: parseThreadsResponse(data, { forums, threads }),
     meta: {
       model: data.model ?? model,
+      problem: problemStatementFrom(data),
       searchedForums: forums.map((f) => f.id),
       searchedDomains: domains,
       from: isoDay(from),

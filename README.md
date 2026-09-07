@@ -86,6 +86,7 @@ Response:
     {
       "title": "What CRM do you use for follow-ups?",
       "url": "https://www.reddit.com/r/smallbusiness/comments/.../",
+      "asksFor": "a simple way to get reminded to call leads back",
       "summary": "Poster runs a landscaping company and keeps forgetting to call leads back.",
       "whyRelevant": "Explicitly asking for a follow-up reminder tool.",
       "postedAt": "2026-08-30",
@@ -154,9 +155,11 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 - `search_after_date_filter` and `search_before_date_filter` set from the requested range (Perplexity does not allow combining these with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
-Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`.
+The prompt is aimed at demand, not supply: it frames the product as something you sell, asks the model to first state the problem a potential customer would have in their own words, and then to find people who have that problem and are asking for a solution. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
 
-The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the poster is seeking something like the product. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
+Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
+
+The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 
 ## Adding a forum
 

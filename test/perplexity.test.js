@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
 import { getForum } from '../src/forums/index.js';
-import { searchThreads, parseThreadsResponse, formatPerplexityDate } from '../src/services/perplexity.js';
+import { searchThreads, parseThreadsResponse, formatPerplexityDate, buildUserPrompt } from '../src/services/perplexity.js';
 
 const config = loadConfig({ PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
 const reddit = getForum('reddit');
@@ -43,6 +43,11 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[1].content, /A tool that does X/);
   assert.match(captured.body.messages[1].content, /up to 3 public Reddit threads/);
+  assert.match(captured.body.messages[0].content, /demand, not supply/);
+  assert.match(captured.body.messages[1].content, /ASKING for a solution/);
+  assert.match(captured.body.messages[1].content, /Exclude:\n- product launches/);
+  assert.deepEqual(captured.body.response_format.json_schema.schema.required, ['problem', 'threads']);
+  assert.deepEqual(captured.body.response_format.json_schema.schema.properties.threads.items.properties.intent.enum, ['seeking', 'offering', 'discussion']);
   assert.deepEqual(captured.body.web_search_options, { search_context_size: 'medium' });
   assert.ok(!captured.init.body.includes('test-key'), 'API key must not leak into the request body');
 });
@@ -132,4 +137,30 @@ test('maps upstream failures to HTTP errors', async () => {
     searchThreads({ ...base, config: loadConfig({}) }),
     (err) => err.status === 500 && /PERPLEXITY_API_KEY/.test(err.message),
   );
+});
+
+test('threads the model labels as offering or discussion are dropped; seeking ones keep asks_for', () => {
+  const data = completion([
+    { title: 'Launch', url: 'https://www.reddit.com/r/a/comments/aaa111/launch/', intent: 'offering', asks_for: '', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.95 },
+    { title: 'Need help', url: 'https://www.reddit.com/r/a/comments/bbb222/need/', intent: 'seeking', asks_for: 'a CRM that nags me to follow up', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.8 },
+    { title: 'Debate', url: 'https://www.reddit.com/r/a/comments/ccc333/debate/', intent: 'discussion', asks_for: '', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.7 },
+    { title: 'Legacy shape', url: 'https://www.reddit.com/r/a/comments/ddd444/old/', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.6 },
+  ]);
+  const out = parseThreadsResponse(data, { forums: [reddit], threads: 10 });
+  assert.deepEqual(out.map((t) => t.title), ['Need help', 'Legacy shape'], 'no intent field is tolerated; wrong intent is dropped');
+  assert.equal(out[0].asksFor, 'a CRM that nags me to follow up');
+  assert.equal(out[1].asksFor, null);
+});
+
+test('the problem statement is surfaced in meta', async () => {
+  const body = { model: 'sonar-pro', search_results: [], choices: [{ message: { content: JSON.stringify({ problem: 'I keep forgetting to follow up with leads', threads: [] }) } }] };
+  const { meta } = await searchThreads({ productDescription: 'd', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z'), config, fetchImpl: async () => jsonResponse(body) });
+  assert.equal(meta.problem, 'I keep forgetting to follow up with leads');
+});
+
+test('prompt frames the product as something we sell and asks for the customer problem first', () => {
+  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(p, /^We sell this product:/);
+  assert.match(p, /state the problem a potential customer would have/);
+  assert.match(p, /people who HAVE that problem/);
 });
