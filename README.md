@@ -125,6 +125,18 @@ Returns `201` with `{ "product": { "id", "name", "website", "description", "user
 
 List the caller's products (newest first) or fetch one. Products belong to the user who created them; row-level security in Postgres means other users' products are invisible, so a foreign id returns 404.
 
+### `PATCH /api/products/:id`
+
+Edits a product in place. The id never changes, and stored search results stay attached. Send the full product, the same three fields as on create; `website` may be omitted to clear it.
+
+```bash
+curl -s -X PATCH https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"FollowUp","website":"followup.app","description":"Nags small-business owners until they call their leads back"}'
+```
+
+Returns `200` with the updated product. Someone else's product returns 404. Changing the description is the intended way to steer later searches, since the search reads it from the product each time.
+
 ### `GET /api/products/:id/results`
 
 Stored search results for one of your products, latest search first, then by relevance score.
