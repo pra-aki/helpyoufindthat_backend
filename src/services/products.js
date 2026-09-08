@@ -29,5 +29,11 @@ export function createProductsService(db) {
       const row = await db.selectOne(token, 'products', { select: '*', id: `eq.${id}` });
       return toApi(row);
     },
+
+    /** Updates name/website/description in place; the row's id is unchanged. */
+    async update(token, id, { name, website, description }) {
+      const row = await db.update(token, 'products', { id: `eq.${id}` }, { name, website: website ?? null, description });
+      return toApi(row);
+    },
   };
 }

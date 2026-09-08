@@ -30,6 +30,17 @@ export function productsRouter({ products, results, protect }) {
     res.json({ product: await products.get(bearer(req), id) });
   });
 
+  // PATCH /api/products/:id  { "name": "...", "website": "https://...", "description": "..." }
+  //   -> updates the product in place; its id does not change
+  router.patch('/products/:id', ...protect, async (req, res) => {
+    const id = parseUuid(req.params.id);
+    const input = parseProductRequest(req.body);
+    const token = bearer(req);
+    await products.get(token, id); // 404 if it doesn't exist or isn't the caller's
+    const product = await products.update(token, id, input);
+    res.json({ product });
+  });
+
   // GET /api/products/:id/results?limit=50&offset=0&source=reddit&minScore=0.5
   //   -> stored search results for the product, latest search first, then by score
   router.get('/products/:id/results', ...protect, async (req, res) => {

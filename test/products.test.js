@@ -51,6 +51,17 @@ test('insert sends the user token, anon key, and asks for the row back', async (
   assert.deepEqual(JSON.parse(captured.init.body), { name: 'A' });
 });
 
+test('update sends a PATCH with the filter query and asks for the row back', async () => {
+  let captured;
+  const db = createSupabaseRest(cfg, { fetchImpl: async (url, init) => { captured = { url: String(url), init }; return jsonRes({ id: '1', name: 'B' }); } });
+  const row = await db.update('user-token', 'products', { id: 'eq.1' }, { name: 'B' });
+  assert.equal(row.name, 'B');
+  assert.equal(captured.url, 'https://abc.supabase.co/rest/v1/products?id=eq.1');
+  assert.equal(captured.init.method, 'PATCH');
+  assert.equal(captured.init.headers.Prefer, 'return=representation');
+  assert.deepEqual(JSON.parse(captured.init.body), { name: 'B' });
+});
+
 test('select builds query string; selectOne maps 406 to 404', async () => {
   let captured;
   const db = createSupabaseRest(cfg, { fetchImpl: async (url) => { captured = String(url); return jsonRes([]); } });
@@ -81,6 +92,7 @@ test('products service maps rows to camelCase and stamps user_id on create', asy
     insert: async (token, table, row) => { calls.push(['insert', token, table, row]); return { id: 'p1', name: row.name, website: row.website, description: row.description, user_id: row.user_id, created_at: 'c', updated_at: 'u' }; },
     select: async () => [{ id: 'p1', name: 'A', website: null, description: 'd', user_id: 'u1', created_at: 'c', updated_at: 'u' }],
     selectOne: async (token, table, query) => { calls.push(['selectOne', query]); return { id: 'p1', name: 'A', website: null, description: 'd', user_id: 'u1', created_at: 'c', updated_at: 'u' }; },
+    update: async (token, table, query, patch) => { calls.push(['update', token, table, query, patch]); return { id: 'p1', name: patch.name, website: patch.website, description: patch.description, user_id: 'u1', created_at: 'c', updated_at: 'u2' }; },
   };
   const svc = createProductsService(fakeDb);
   const created = await svc.create('tok', { id: 'u1' }, { name: 'A', website: null, description: 'd' });
@@ -89,6 +101,10 @@ test('products service maps rows to camelCase and stamps user_id on create', asy
   assert.equal((await svc.list('tok')).length, 1);
   await svc.get('tok', 'p1');
   assert.deepEqual(calls[1], ['selectOne', { select: '*', id: 'eq.p1' }]);
+
+  const updated = await svc.update('tok', 'p1', { name: 'B', website: null, description: 'd2' });
+  assert.deepEqual(updated, { id: 'p1', name: 'B', website: null, description: 'd2', userId: 'u1', createdAt: 'c', updatedAt: 'u2' });
+  assert.deepEqual(calls[2], ['update', 'tok', 'products', { id: 'eq.p1' }, { name: 'B', website: null, description: 'd2' }]);
 });
 
 // ---------- HTTP routes ----------
@@ -103,6 +119,7 @@ const fakeProducts = {
   create: async (token, user, input) => { const p = { id: `p${store.length + 1}`, ...input, userId: user.id, createdAt: 'c', updatedAt: 'u' }; store.push(p); return p; },
   list: async () => [...store].reverse(),
   get: async (token, id) => { const p = store.find((x) => x.id === id); if (!p) throw new HttpError(404, 'Not found'); return p; },
+  update: async (token, id, input) => { const p = store.find((x) => x.id === id); if (!p) throw new HttpError(404, 'Not found'); Object.assign(p, input); return p; },
 };
 let server; let base;
 before(async () => {
@@ -134,4 +151,36 @@ test('GET /api/products lists and GET /api/products/:id fetches or 404s', async 
   assert.equal(one.status, 404, 'unknown uuid is 404');
   const badId = await fetch(`${base}/api/products/not-a-uuid`, { headers: auth });
   assert.equal(badId.status, 400);
+});
+
+test('PATCH /api/products/:id updates in place, keeping the id, and 404s for unknown ids', async () => {
+  // Own fake store with real UUIDs, since parseUuid rejects the "p1"-style
+  // ids the shared fixture above uses.
+  const id = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
+  const productsWithUuid = {
+    ...fakeProducts,
+    get: async (token, pid) => { if (pid !== id) throw new HttpError(404, 'Not found'); return { id, name: 'Acme', website: null, description: 'Does things', userId: 'user-1' }; },
+    update: async (token, pid, input) => ({ id: pid, ...input, userId: 'user-1' }),
+  };
+  const fresh = createApp({ config, verify: fakeVerify, products: productsWithUuid }).listen(0);
+  await new Promise((r) => fresh.once('listening', r));
+  const freshBase = `http://127.0.0.1:${fresh.address().port}`;
+
+  const noAuth = await fetch(`${freshBase}/api/products/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify({ name: 'B', description: 'd2' }) });
+  assert.equal(noAuth.status, 401);
+
+  const invalid = await fetch(`${freshBase}/api/products/${id}`, { method: 'PATCH', headers: { ...json, ...auth }, body: JSON.stringify({ name: 'B' }) });
+  assert.equal(invalid.status, 400);
+
+  const ok = await fetch(`${freshBase}/api/products/${id}`, { method: 'PATCH', headers: { ...json, ...auth }, body: JSON.stringify({ name: 'Acme Renamed', website: 'acme.com', description: 'Updated description' }) });
+  assert.equal(ok.status, 200);
+  const { product } = await ok.json();
+  assert.equal(product.id, id);
+  assert.equal(product.name, 'Acme Renamed');
+  assert.equal(product.description, 'Updated description');
+
+  const unknown = await fetch(`${freshBase}/api/products/11111111-1111-1111-1111-111111111111`, { method: 'PATCH', headers: { ...json, ...auth }, body: JSON.stringify({ name: 'B', description: 'd' }) });
+  assert.equal(unknown.status, 404);
+
+  fresh.close();
 });

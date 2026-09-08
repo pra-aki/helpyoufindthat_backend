@@ -63,6 +63,10 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
     insert: async (token, table, row) =>
       (await request({ token, method: 'POST', table, body: row, prefer: 'return=representation', single: true })).data,
 
+    /** Updates the row matching `query` (e.g. { id: 'eq.<uuid>' }). Returns the updated row, or null if none matched. */
+    update: async (token, table, query, patch) =>
+      (await request({ token, method: 'PATCH', table, query, body: patch, prefer: 'return=representation', single: true })).data,
+
     /** Insert rows, updating existing ones that collide on `onConflict` columns. Returns the stored rows. */
     upsert: async (token, table, rows, { onConflict }) =>
       (await request({ token, method: 'POST', table, query: { on_conflict: onConflict }, body: rows, prefer: 'resolution=merge-duplicates,return=representation' })).data ?? [],
