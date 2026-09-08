@@ -161,3 +161,17 @@ test('composeGeneralReply with no website tells the model not to invent a link',
   await composeGeneralReply({ product: { name: 'N', website: null, description: 'd' }, config: pplx, fetchImpl: async (u, init) => { captured = JSON.parse(init.body); return jsonRes({ choices: [{ message: { content: JSON.stringify({ reply: 'r', notes: 'n' }) } }] }); } });
   assert.match(captured.messages[1].content, /no link to give, so do not invent one/);
 });
+
+test('choosing threads is separated from writing replies, and a partial fit is kept', () => {
+  const p = buildUserPrompt({ productDescription: 'X', website: 'https://a.com/', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(p, /A partial fit still counts/);
+  assert.match(p, /It must not change which threads you return or how you rank them/);
+  assert.match(p, /write a shorter reply about the part it does fit\. Still return the thread/);
+  assert.ok(!/leave the thread out rather than stretching/.test(p), 'the reply rules must not drop leads');
+
+  // every instruction about choosing and ranking comes before the reply section
+  const replySection = p.indexOf('SECOND TASK');
+  for (const marker of ['are ASKING for a solution', 'Include only threads where the author is seeking', 'A partial fit still counts', 'Only include threads whose URL appeared', 'Rank by how strongly']) {
+    assert.ok(p.indexOf(marker) > -1 && p.indexOf(marker) < replySection, `"${marker}" should come before the reply instructions`);
+  }
+});

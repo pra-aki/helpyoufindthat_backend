@@ -86,10 +86,13 @@ export function buildUserPrompt({ productDescription, website, forums, threads, 
     '- posts where the author already has a solution and is sharing or explaining it',
     '- general discussion of the topic with no request in it',
     'Threads like these are still "offering" or "discussion" even if the topic matches the product exactly.',
+    'A partial fit still counts. If the product would help with part of what the author is asking about, include the thread and score it accordingly.',
     '',
     ...hints,
     '',
-    'For each thread you include, draft the reply we would post there (the "suggested_reply" field).',
+    `${ranking} Only include threads whose URL appeared in your search results.`,
+    '',
+    'SECOND TASK, once you have chosen those threads: for each thread you are returning, draft the reply we would post there (the "suggested_reply" field). This is a writing task only. It must not change which threads you return or how you rank them.',
     '',
     ...voices,
     '',
@@ -98,9 +101,9 @@ export function buildUserPrompt({ productDescription, website, forums, threads, 
     website ? `Point them at it with the bare link, once: ${website}` : 'There is no link to give, so do not invent one.',
     'Do not open with sympathy or agreement. Do not claim to have had their problem, to use the product yourself, or to have any experience you were not given. Claim nothing the product description does not support.',
     '40 to 80 words. Contractions and plain words. No greeting, no sign-off, no exclamation marks, no bullet points. Never write "Great question", "I totally understand", "I feel your pain", "I ran into the same", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless" or "game-changer".',
-    'If the product does not genuinely fit what they asked for, leave the thread out rather than stretching.',
+    'If the product only partly fits what the author asked for, write a shorter reply about the part it does fit. Still return the thread.',
     '',
-    `${ranking} Only include threads whose URL appeared in your search results. Return JSON matching the schema.`,
+    'Return JSON matching the schema.',
   ].join('\n');
 }
 
@@ -427,8 +430,9 @@ export async function searchThreads({ productDescription, productWebsite = null,
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
   const requestBody = {
     model,
-    // Low enough to keep extraction reliable, high enough that the drafted replies do not read like a template.
-    temperature: 0.3,
+    // Extraction and ranking need to be repeatable, so this stays low; the reply prompt, not the
+    // sampling temperature, is what keeps the drafts from reading like a template.
+    temperature: 0.1,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserPrompt({ productDescription, website: productWebsite, forums, threads, from, to }) },
