@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { parseProductRequest, parseUuid, parseUuidList, parseResultsQuery, parseWebsite } from '../validation.js';
-import { describeWebsite } from '../services/perplexity.js';
+import { describeWebsite, composeGeneralReply } from '../services/perplexity.js';
 
 const bearer = (req) => (req.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
 
@@ -10,10 +10,11 @@ const bearer = (req) => (req.get('authorization') ?? '').replace(/^Bearer\s+/i, 
  * @param {object} deps.products       products service (src/services/products.js)
  * @param {object} deps.results        results service (src/services/results.js)
  * @param {Function} [deps.describe]   website description generator, injectable for tests
+ * @param {Function} [deps.compose]    general reply composer, injectable for tests
  * @param {Function[]} deps.protect    auth middleware
  * @param {Function[]} [deps.limited]  auth + rate limit, for routes that call Perplexity
  */
-export function productsRouter({ config, products, results, describe = describeWebsite, protect, limited = protect }) {
+export function productsRouter({ config, products, results, describe = describeWebsite, compose = composeGeneralReply, protect, limited = protect }) {
   const router = Router();
 
   // POST /api/products/describe  { "website": "https://..." }
@@ -51,6 +52,16 @@ export function productsRouter({ config, products, results, describe = describeW
     await products.get(token, id); // 404 if it doesn't exist or isn't the caller's
     const product = await products.update(token, id, input);
     res.json({ product });
+  });
+
+  // POST /api/products/:id/reply   -> composes the product's general reply and stores it on the product
+  router.post('/products/:id/reply', ...limited, async (req, res) => {
+    const id = parseUuid(req.params.id);
+    const token = bearer(req);
+    const product = await products.get(token, id);
+    const { reply, notes, meta } = await compose({ product, config });
+    const updated = await products.setGeneralReply(token, id, reply);
+    res.json({ product: updated, notes, meta });
   });
 
   // DELETE /api/products/:id/results/:resultId   -> deletes one lead

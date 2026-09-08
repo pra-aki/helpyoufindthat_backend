@@ -59,7 +59,7 @@ test('save maps threads to rows, dedupes links within a batch, and returns store
   const when = new Date('2026-09-04T10:00:00Z');
   const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews', postedAt: 'unknown' }), thread()], { searchDate: when });
   assert.equal(sent.length, 2, 'duplicate link in the same batch is sent once');
-  assert.deepEqual(sent[0], { product_id: 'prod-1', source_site: 'reddit', link: 'https://www.reddit.com/r/a/comments/x1/t/', title: 'T', summary: 'S', why_relevant: 'W', posted_at: '2026-09-01T00:00:00.000Z', relevance_score: 0.877, search_date: '2026-09-04T10:00:00.000Z' });
+  assert.deepEqual(sent[0], { product_id: 'prod-1', source_site: 'reddit', link: 'https://www.reddit.com/r/a/comments/x1/t/', title: 'T', summary: 'S', why_relevant: 'W', suggested_reply: null, posted_at: '2026-09-01T00:00:00.000Z', relevance_score: 0.877, search_date: '2026-09-04T10:00:00.000Z' });
   assert.equal(sent[1].posted_at, null, 'unparseable dates become null');
   assert.deepEqual(stored.map((r) => [r.link, r.source, r.relevanceScore]), [['https://www.reddit.com/r/a/comments/x1/t/', 'reddit', 0.877], ['https://news.ycombinator.com/item?id=1', 'hackernews', 0.877]]);
   assert.deepEqual(await svc.save('tok', 'prod-1', []), [], 'nothing to save makes no request');

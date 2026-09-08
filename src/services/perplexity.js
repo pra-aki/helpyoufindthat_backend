@@ -32,13 +32,17 @@ const RESPONSE_SCHEMA = {
           asks_for: { type: 'string', description: 'What the author is asking for, in a few words; empty if intent is not seeking' },
           summary: { type: 'string', description: 'One or two sentences describing the situation the author describes' },
           why_relevant: { type: 'string', description: 'Why this person is a potential customer for the described product' },
+          suggested_reply: {
+            type: 'string',
+            description: "A reply we could post on this thread: engages with the author's own situation, mentions the product once as a suggestion, and discloses that we make it",
+          },
           posted_at: { type: 'string', description: 'When it was posted, as ISO 8601 date if known, otherwise empty string' },
           relevance_score: {
             type: 'number',
             description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; below 0.3 = tangential',
           },
         },
-        required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
+        required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'suggested_reply', 'posted_at', 'relevance_score'],
       },
     },
   },
@@ -82,6 +86,12 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     'Threads like these are still "offering" or "discussion" even if the topic matches the product exactly.',
     '',
     ...hints,
+    '',
+    'For each thread you include, also draft a reply we could post there (the "suggested_reply" field):',
+    "- open by engaging with the author's actual situation, in their own terms, not with our product",
+    '- mention the product once, plainly, as a suggestion, and say plainly that we make it',
+    '- match the register of the site and the author: no marketing language, no greeting or sign-off, no links, no bullet points',
+    '- 40 to 80 words, and leave anything they did not tell us unstated rather than inventing it',
     '',
     `${ranking} Only include threads whose URL appeared in your search results. Return JSON matching the schema.`,
   ].join('\n');
@@ -182,6 +192,7 @@ export function parseThreadsResponse(data, { forums, threads }) {
       asksFor: String(item.asks_for ?? '').trim() || null,
       summary: String(item.summary ?? '').trim(),
       whyRelevant: String(item.why_relevant ?? '').trim(),
+      suggestedReply: String(item.suggested_reply ?? '').trim() || null,
       postedAt: String(item.posted_at || fromSearch?.date || '').trim() || null,
       relevanceScore: clampScore(item.relevance_score),
       source: forum.id,
@@ -305,6 +316,88 @@ export async function describeWebsite({ website, config, fetchImpl = fetch }) {
       usage: data.usage ?? null,
       sources: Array.isArray(data.search_results) ? data.search_results.map((r) => r.url).filter(Boolean).slice(0, 10) : [],
     },
+  };
+}
+
+const GENERAL_REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: {
+      type: 'string',
+      description: 'The reply text itself, ready to paste and edit. No greeting, no sign-off, no links, no formatting.',
+    },
+    notes: {
+      type: 'string',
+      description: 'One sentence telling the person posting it what to change for a specific thread',
+    },
+  },
+  required: ['reply', 'notes'],
+};
+
+/**
+ * Composes a reusable reply for a product: the starting point a user edits
+ * before posting it on a thread where someone is asking for this kind of thing.
+ *
+ * @param {object} params
+ * @param {object} params.product   { name, description, website }
+ * @param {object} params.config
+ * @param {Function} [params.fetchImpl]
+ */
+export async function composeGeneralReply({ product, config, fetchImpl = fetch }) {
+  const { model, searchContextSize } = config.perplexity;
+  const domain = product.website ? [new URL(product.website).hostname.replace(/^www\./, '')] : undefined;
+
+  const requestBody = {
+    model,
+    temperature: 0.3,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You write short, plain replies that a founder can post on a public forum thread where someone is asking for the kind of thing they sell. You are helpful first and promotional second. You never write marketing copy, and you always disclose that the writer makes the product.',
+      },
+      {
+        role: 'user',
+        content: [
+          `Product name: ${product.name}`,
+          product.website ? `Website: ${product.website}` : null,
+          'What it does:',
+          '"""',
+          product.description,
+          '"""',
+          '',
+          'Write one reply we can post on forum threads where someone is asking for a solution like this. It is a starting point that a person will adapt to each thread, so it must read naturally on its own and be easy to edit.',
+          '',
+          'Rules:',
+          '- speak as the person who makes it, and say so plainly (for example "I built" or "I work on")',
+          '- lead with something useful about the problem, not with the product',
+          '- describe what it does in one plain sentence, the way a user would say it',
+          '- 50 to 90 words, no greeting, no sign-off, no links, no bullet points, no marketing adjectives, no exclamation marks',
+          '- do not claim results, pricing, or features beyond what is described above',
+          '- leave the specifics of any one thread out; the person posting will add those',
+          '',
+          'Also give one sentence of notes on what to change per thread. Return JSON matching the schema.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ],
+    ...(domain ? { search_domain_filter: domain } : {}),
+    web_search_options: { search_context_size: searchContextSize },
+    return_related_questions: false,
+    response_format: { type: 'json_schema', json_schema: { schema: GENERAL_REPLY_SCHEMA } },
+  };
+
+  const data = await callPerplexity(requestBody, config, fetchImpl);
+  const parsed = parseContentJson(data?.choices?.[0]?.message?.content, { requireThreads: false });
+  const reply = typeof parsed?.reply === 'string' ? parsed.reply.trim() : '';
+  if (!reply) {
+    throw new PerplexityError('Perplexity did not return a usable reply', { status: 502 });
+  }
+  return {
+    reply: reply.slice(0, 4000),
+    notes: String(parsed.notes ?? '').trim().slice(0, 500) || null,
+    meta: { model: data.model ?? model, usage: data.usage ?? null },
   };
 }
 

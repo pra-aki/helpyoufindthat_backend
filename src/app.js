@@ -17,8 +17,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {object} [deps.products]   injectable products service (tests)
  * @param {object} [deps.results]    injectable results service (tests)
  * @param {Function} [deps.describe] injectable website describer (tests)
+ * @param {Function} [deps.compose]  injectable general reply composer (tests)
  */
-export function createApp({ config, search, verify, products, results, describe } = {}) {
+export function createApp({ config, search, verify, products, results, describe, compose } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -42,7 +43,7 @@ export function createApp({ config, search, verify, products, results, describe 
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/api', threadsRouter({ config, search, products: productsService, results: resultsService, protect }));
-  app.use('/api', productsRouter({ config, products: productsService, results: resultsService, describe, protect: [authenticate], limited: protect }));
+  app.use('/api', productsRouter({ config, products: productsService, results: resultsService, describe, compose, protect: [authenticate], limited: protect }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });

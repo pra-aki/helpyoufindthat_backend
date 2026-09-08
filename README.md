@@ -87,6 +87,7 @@ Response:
       "title": "What CRM do you use for follow-ups?",
       "url": "https://www.reddit.com/r/smallbusiness/comments/.../",
       "asksFor": "a simple way to get reminded to call leads back",
+      "suggestedReply": "Losing quotes between the job and the callback is the usual failure, not forgetting the customer. I build FollowUp, which nudges you until you've actually called a lead back. Happy to explain how we handle the timing if it's useful.",
       "summary": "Poster runs a landscaping company and keeps forgetting to call leads back.",
       "whyRelevant": "Explicitly asking for a follow-up reminder tool.",
       "postedAt": "2026-08-30",
@@ -148,6 +149,18 @@ curl -s https://helpyoufindthat-backend.onrender.com/api/products/describe \
 
 Returns `{ website, name, description, problem, audience, confidence, meta: { model, usage, sources } }`. The description is written the way the search prompt wants it: what the product does, who it is for, and the problem it solves, in plain language. `problem` is that problem in a customer's own words, and `confidence` (0 to 1) says how well the site supported the description; a low value usually means the site is thin, gated, or unreachable.
 
+### `POST /api/products/:id/reply`
+
+Composes the product's **general reply**: one short, reusable post the user edits before pitching on a thread. It is stored on the product as `generalReply` and returned by every product endpoint. Calling it again replaces it. Costs one Perplexity call and counts against the search rate limit.
+
+```bash
+curl -s -X POST https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/reply -H "Authorization: Bearer $TOKEN"
+```
+
+Returns `{ product, notes, meta }`, where `notes` is one sentence on what to change per thread. The reply is written to disclose that you make the product, lead with the problem rather than the pitch, and stay 50 to 90 words with no links or marketing language.
+
+`generalReply` is also accepted (optionally) by `POST /api/products` and `PATCH /api/products/:id`, so users can edit or clear it by hand. Omitting it on a PATCH leaves the stored reply untouched.
+
 ### `DELETE /api/products/:id/results/:resultId` and `DELETE /api/products/:id/results`
 
 Delete one lead, or several at once with `{ "ids": ["...", "..."] }` in the body (or `?ids=a,b,c`). Up to 1000 ids per call. Only leads under your own product can be deleted; the bulk response lists `ids` that were deleted and `notFound` for the rest.
@@ -191,7 +204,9 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 
 The prompt is aimed at demand, not supply: it frames the product as something you sell, asks the model to first state the problem a potential customer would have in their own words, and then to find people who have that problem and are asking for a solution. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
 
-Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
+Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread also carries `suggestedReply`, a draft written for that specific thread: it engages with the author's own situation, mentions the product once as a suggestion, discloses that you make it, and runs 40 to 80 words. It is generated inside the same search call, because that call has the retrieved thread content in context while a later call would only see the title and summary. Drafts are stored alongside the lead and returned by the results endpoint. Nothing is ever posted anywhere; these are drafts for a person to edit.
+
+Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
 
 The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 

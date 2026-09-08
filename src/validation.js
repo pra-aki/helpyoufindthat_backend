@@ -175,7 +175,23 @@ export function parseProductRequest(source) {
   const websiteRaw = firstDefined(source, ['website', 'productWebsite', 'product_website', 'url']);
   const website = websiteRaw === undefined ? null : parseWebsite(websiteRaw);
 
-  return { name, website, description };
+  // Optional, and left untouched on update when absent, so editing a product
+  // does not discard a composed reply.
+  const replyRaw = source.generalReply ?? source.general_reply;
+  let generalReply;
+  if (replyRaw !== undefined) {
+    if (replyRaw === null || replyRaw === '') {
+      generalReply = null;
+    } else if (typeof replyRaw !== 'string') {
+      throw new HttpError(400, '"generalReply" must be a string', { field: 'generalReply' });
+    } else if (replyRaw.length > 4000) {
+      throw new HttpError(400, '"generalReply" must be at most 4000 characters', { field: 'generalReply', max: 4000 });
+    } else {
+      generalReply = replyRaw.trim();
+    }
+  }
+
+  return { name, website, description, generalReply };
 }
 
 /** Normalises a website to a full http(s) URL string, or throws a 400. */

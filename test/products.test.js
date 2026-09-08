@@ -11,7 +11,7 @@ import { createProductsService } from '../src/services/products.js';
 
 test('parseProductRequest accepts camelCase and snake_case, normalises website', () => {
   const a = parseProductRequest({ name: ' Acme ', website: 'acme.com', description: 'Does things' });
-  assert.deepEqual(a, { name: 'Acme', website: 'https://acme.com/', description: 'Does things' });
+  assert.deepEqual(a, { name: 'Acme', website: 'https://acme.com/', description: 'Does things', generalReply: undefined });
   const b = parseProductRequest({ productName: 'X', product_website: 'https://x.io/p?q=1', productDescription: 'd' });
   assert.equal(b.website, 'https://x.io/p?q=1');
   assert.equal(parseProductRequest({ name: 'X', description: 'd' }).website, null);
@@ -96,14 +96,14 @@ test('products service maps rows to camelCase and stamps user_id on create', asy
   };
   const svc = createProductsService(fakeDb);
   const created = await svc.create('tok', { id: 'u1' }, { name: 'A', website: null, description: 'd' });
-  assert.deepEqual(created, { id: 'p1', name: 'A', website: null, description: 'd', userId: 'u1', createdAt: 'c', updatedAt: 'u' });
+  assert.deepEqual(created, { id: 'p1', name: 'A', website: null, description: 'd', generalReply: null, userId: 'u1', createdAt: 'c', updatedAt: 'u' });
   assert.deepEqual(calls[0], ['insert', 'tok', 'products', { name: 'A', website: null, description: 'd', user_id: 'u1' }]);
   assert.equal((await svc.list('tok')).length, 1);
   await svc.get('tok', 'p1');
   assert.deepEqual(calls[1], ['selectOne', { select: '*', id: 'eq.p1' }]);
 
   const updated = await svc.update('tok', 'p1', { name: 'B', website: null, description: 'd2' });
-  assert.deepEqual(updated, { id: 'p1', name: 'B', website: null, description: 'd2', userId: 'u1', createdAt: 'c', updatedAt: 'u2' });
+  assert.deepEqual(updated, { id: 'p1', name: 'B', website: null, description: 'd2', generalReply: null, userId: 'u1', createdAt: 'c', updatedAt: 'u2' });
   assert.deepEqual(calls[2], ['update', 'tok', 'products', { id: 'eq.p1' }, { name: 'B', website: null, description: 'd2' }]);
 });
 

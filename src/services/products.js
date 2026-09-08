@@ -8,6 +8,7 @@ const toApi = (row) =>
     name: row.name,
     website: row.website ?? null,
     description: row.description,
+    generalReply: row.general_reply ?? null,
     userId: row.user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -15,8 +16,14 @@ const toApi = (row) =>
 
 export function createProductsService(db) {
   return {
-    async create(token, user, { name, website, description }) {
-      const row = await db.insert(token, 'products', { name, website: website ?? null, description, user_id: user.id });
+    async create(token, user, { name, website, description, generalReply }) {
+      const row = await db.insert(token, 'products', {
+        name,
+        website: website ?? null,
+        description,
+        user_id: user.id,
+        ...(generalReply === undefined ? {} : { general_reply: generalReply }),
+      });
       return toApi(row);
     },
 
@@ -30,9 +37,20 @@ export function createProductsService(db) {
       return toApi(row);
     },
 
-    /** Updates name/website/description in place; the row's id is unchanged. */
-    async update(token, id, { name, website, description }) {
-      const row = await db.update(token, 'products', { id: `eq.${id}` }, { name, website: website ?? null, description });
+    /**
+     * Updates name/website/description in place; the row's id is unchanged.
+     * general_reply is only touched when the caller supplied one, so editing a
+     * product does not wipe a composed reply.
+     */
+    async update(token, id, { name, website, description, generalReply }) {
+      const patch = { name, website: website ?? null, description, ...(generalReply === undefined ? {} : { general_reply: generalReply }) };
+      const row = await db.update(token, 'products', { id: `eq.${id}` }, patch);
+      return toApi(row);
+    },
+
+    /** Stores a composed general reply without touching the rest of the product. */
+    async setGeneralReply(token, id, generalReply) {
+      const row = await db.update(token, 'products', { id: `eq.${id}` }, { general_reply: generalReply });
       return toApi(row);
     },
   };
