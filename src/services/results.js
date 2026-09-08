@@ -50,6 +50,13 @@ export function createResultsService(db) {
       return rows.map((r) => byLink.get(r.link)).filter(Boolean);
     },
 
+    /** Deletes the given result ids under a product. Returns the ids actually deleted. */
+    async remove(token, productId, ids) {
+      if (ids.length === 0) return [];
+      const rows = await db.remove(token, 'search_results', { product_id: `eq.${productId}`, id: `in.(${ids.join(',')})`, select: 'id' });
+      return rows.map((r) => r.id);
+    },
+
     /** Pages through a product's stored results, latest search first, then by score. */
     async list(token, productId, { limit, offset, source, minScore }) {
       const query = {

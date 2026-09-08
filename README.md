@@ -137,6 +137,28 @@ curl -s -X PATCH https://helpyoufindthat-backend.onrender.com/api/products/$PROD
 
 Returns `200` with the updated product. Someone else's product returns 404. Changing the description is the intended way to steer later searches, since the search reads it from the product each time.
 
+### `POST /api/products/describe`
+
+Generates a product description from a website, for pre-filling the create or edit form. Perplexity reads the site (the server never fetches it), so it costs one Perplexity call and counts against the search rate limit. Nothing is saved.
+
+```bash
+curl -s https://helpyoufindthat-backend.onrender.com/api/products/describe \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"website":"followup.app"}'
+```
+
+Returns `{ website, name, description, problem, audience, confidence, meta: { model, usage, sources } }`. The description is written the way the search prompt wants it: what the product does, who it is for, and the problem it solves, in plain language. `problem` is that problem in a customer's own words, and `confidence` (0 to 1) says how well the site supported the description; a low value usually means the site is thin, gated, or unreachable.
+
+### `DELETE /api/products/:id/results/:resultId` and `DELETE /api/products/:id/results`
+
+Delete one lead, or several at once with `{ "ids": ["...", "..."] }` in the body (or `?ids=a,b,c`). Up to 1000 ids per call. Only leads under your own product can be deleted; the bulk response lists `ids` that were deleted and `notFound` for the rest.
+
+```bash
+curl -s -X DELETE "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results" \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"ids":["<result id>","<result id>"]}'
+```
+
+Note that a deleted lead can come back if a later search finds the same thread again, since searches store whatever they find.
+
 ### `GET /api/products/:id/results`
 
 Stored search results for one of your products, latest search first, then by relevance score.

@@ -100,7 +100,7 @@ const clampScore = (value) => {
   return Math.min(1, Math.max(0, n));
 };
 
-const parseContentJson = (content) => {
+const parseContentJson = (content, { requireThreads = true } = {}) => {
   if (typeof content !== 'string') return null;
   const trimmed = content.trim();
   const candidates = [trimmed];
@@ -111,7 +111,7 @@ const parseContentJson = (content) => {
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed && Array.isArray(parsed.threads)) return parsed;
+      if (parsed && typeof parsed === 'object' && (!requireThreads || Array.isArray(parsed.threads))) return parsed;
     } catch {
       // try the next candidate
     }
@@ -192,42 +192,12 @@ export function parseThreadsResponse(data, { forums, threads }) {
   return results.slice(0, threads);
 }
 
-/**
- * Searches one or more forums through Perplexity's Sonar API in a single call.
- *
- * @param {object} params
- * @param {string} params.productDescription
- * @param {object[]} params.forums   entries from the forum registry
- * @param {number} params.threads    max results to return in total
- * @param {Date} params.from         first day to include (UTC)
- * @param {Date} params.to           last day to include (UTC)
- * @param {object} params.config     app config (see src/config.js)
- * @param {Function} [params.fetchImpl]  injectable fetch for tests
- * @param {Date} [params.now]            injectable clock for tests
- */
-export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
-  const { apiKey, baseUrl, model, timeoutMs, searchContextSize } = config.perplexity;
+/** Sends one chat completion to Perplexity and returns the parsed JSON body, mapping failures to HTTP errors. */
+async function callPerplexity(requestBody, config, fetchImpl) {
+  const { apiKey, baseUrl, timeoutMs } = config.perplexity;
   if (!apiKey) {
     throw new PerplexityError('Server is missing PERPLEXITY_API_KEY', { status: 500 });
   }
-
-  const domains = [...new Set(forums.flatMap((f) => f.domains))];
-  const requestBody = {
-    model,
-    temperature: 0.1,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
-    ],
-    search_domain_filter: domains,
-    // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.
-    // The "before" filter is exclusive, so the day after "to" makes the range inclusive.
-    search_after_date_filter: formatPerplexityDate(from),
-    search_before_date_filter: formatPerplexityDate(new Date(to.getTime() + DAY_MS)),
-    web_search_options: { search_context_size: searchContextSize },
-    return_related_questions: false,
-    response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
-  };
 
   let response;
   try {
@@ -257,12 +227,121 @@ export async function searchThreads({ productDescription, forums, threads, from,
     });
   }
 
-  let data;
   try {
-    data = await response.json();
+    return await response.json();
   } catch (cause) {
     throw new PerplexityError('Perplexity returned a non-JSON response', { cause });
   }
+}
+
+const DESCRIBE_SCHEMA = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', description: 'The product or company name as the site presents it' },
+    description: {
+      type: 'string',
+      description: 'Two to four plain sentences: what the product does, who it is for, and the problem it solves for them. No marketing adjectives, no slogans.',
+    },
+    problem: { type: 'string', description: 'One sentence: the problem a customer would have, in the words they would use when asking for help' },
+    audience: { type: 'string', description: 'Who the product is for, in a few words' },
+    confidence: { type: 'number', description: '0 to 1: how well the site content supported this description' },
+  },
+  required: ['name', 'description', 'problem', 'audience', 'confidence'],
+};
+
+/**
+ * Asks Perplexity to read a product's website and write the description the
+ * search prompt needs: what it does, who it is for, and the problem it solves.
+ * Nothing is fetched by this server; Perplexity reads the site.
+ */
+export async function describeWebsite({ website, config, fetchImpl = fetch }) {
+  const { model, searchContextSize } = config.perplexity;
+  const hostname = new URL(website).hostname.replace(/^www\./, '');
+  const requestBody = {
+    model,
+    temperature: 0.1,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You read a product website and describe the product factually for someone who has never seen it. Use only what the site says. If the site is unreachable, empty, or not a product, say so in the description and set confidence to 0.',
+      },
+      {
+        role: 'user',
+        content: [
+          `Read the product website at ${website} (including its main pages such as home, product, pricing, and about).`,
+          '',
+          'Write a description that will be used to find people who need this product. It must say, in plain language:',
+          '1. what the product does',
+          '2. who it is for',
+          '3. the problem it solves for them, and what that problem looks like day to day',
+          'Two to four sentences, no marketing adjectives, no slogans, no claims the site does not make.',
+          '',
+          'Also give the product name, the audience in a few words, and the problem in the words a customer would use when asking for help. Return JSON matching the schema.',
+        ].join('\n'),
+      },
+    ],
+    search_domain_filter: [hostname],
+    web_search_options: { search_context_size: searchContextSize },
+    return_related_questions: false,
+    response_format: { type: 'json_schema', json_schema: { schema: DESCRIBE_SCHEMA } },
+  };
+
+  const data = await callPerplexity(requestBody, config, fetchImpl);
+  const parsed = parseContentJson(data?.choices?.[0]?.message?.content, { requireThreads: false });
+  if (!parsed || typeof parsed.description !== 'string' || !parsed.description.trim()) {
+    throw new PerplexityError('Perplexity did not return a usable description', { status: 502 });
+  }
+  const clean = (v, max) => String(v ?? '').trim().slice(0, max) || null;
+  return {
+    website,
+    name: clean(parsed.name, 200),
+    description: clean(parsed.description, 2000),
+    problem: clean(parsed.problem, 500),
+    audience: clean(parsed.audience, 200),
+    confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0)),
+    meta: {
+      model: data.model ?? model,
+      usage: data.usage ?? null,
+      sources: Array.isArray(data.search_results) ? data.search_results.map((r) => r.url).filter(Boolean).slice(0, 10) : [],
+    },
+  };
+}
+
+/**
+ * Searches one or more forums through Perplexity's Sonar API in a single call.
+ *
+ * @param {object} params
+ * @param {string} params.productDescription
+ * @param {object[]} params.forums   entries from the forum registry
+ * @param {number} params.threads    max results to return in total
+ * @param {Date} params.from         first day to include (UTC)
+ * @param {Date} params.to           last day to include (UTC)
+ * @param {object} params.config     app config (see src/config.js)
+ * @param {Function} [params.fetchImpl]  injectable fetch for tests
+ * @param {Date} [params.now]            injectable clock for tests
+ */
+export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
+  const { model, searchContextSize } = config.perplexity;
+  const domains = [...new Set(forums.flatMap((f) => f.domains))];
+  const requestBody = {
+    model,
+    temperature: 0.1,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
+    ],
+    search_domain_filter: domains,
+    // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.
+    // The "before" filter is exclusive, so the day after "to" makes the range inclusive.
+    search_after_date_filter: formatPerplexityDate(from),
+    search_before_date_filter: formatPerplexityDate(new Date(to.getTime() + DAY_MS)),
+    web_search_options: { search_context_size: searchContextSize },
+    return_related_questions: false,
+    response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
+  };
+
+  const data = await callPerplexity(requestBody, config, fetchImpl);
 
   return {
     threads: parseThreadsResponse(data, { forums, threads }),

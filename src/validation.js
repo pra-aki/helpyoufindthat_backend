@@ -172,25 +172,50 @@ export function parseProductRequest(source) {
     max: 2000,
   });
 
-  let website = firstDefined(source, ['website', 'productWebsite', 'product_website', 'url']);
-  if (website !== undefined) {
-    if (typeof website !== 'string') throw new HttpError(400, '"website" must be a string', { field: 'website' });
-    website = website.trim();
-    if (website.length > 2048) throw new HttpError(400, '"website" must be at most 2048 characters', { field: 'website' });
-    if (!/^https?:\/\//i.test(website)) website = `https://${website}`;
-    let parsed;
-    try {
-      parsed = new URL(website);
-    } catch {
-      throw new HttpError(400, '"website" must be a valid URL', { field: 'website', received: source.website });
-    }
-    if (!parsed.hostname.includes('.')) throw new HttpError(400, '"website" must be a valid URL', { field: 'website', received: source.website });
-    website = parsed.href;
-  } else {
-    website = null;
-  }
+  const websiteRaw = firstDefined(source, ['website', 'productWebsite', 'product_website', 'url']);
+  const website = websiteRaw === undefined ? null : parseWebsite(websiteRaw);
 
   return { name, website, description };
+}
+
+/** Normalises a website to a full http(s) URL string, or throws a 400. */
+export function parseWebsite(value, name = 'website') {
+  if (typeof value !== 'string') throw new HttpError(400, `"${name}" must be a string`, { field: name });
+  let website = value.trim();
+  if (website.length === 0) throw new HttpError(400, `"${name}" is required`, { field: name });
+  if (website.length > 2048) throw new HttpError(400, `"${name}" must be at most 2048 characters`, { field: name });
+  if (!/^https?:\/\//i.test(website)) website = `https://${website}`;
+  let parsed;
+  try {
+    parsed = new URL(website);
+  } catch {
+    throw new HttpError(400, `"${name}" must be a valid URL`, { field: name, received: value });
+  }
+  if (!/^https?:$/.test(parsed.protocol) || !parsed.hostname.includes('.')) {
+    throw new HttpError(400, `"${name}" must be a valid URL`, { field: name, received: value });
+  }
+  return parsed.href;
+}
+
+/**
+ * A list of UUIDs from a JSON array, a comma-separated string, or a single id.
+ * De-duplicated, lowercased, capped at `max`.
+ */
+export function parseUuidList(input, { name = 'ids', max = 1000 } = {}) {
+  const raw = Array.isArray(input) ? input : typeof input === 'string' ? input.split(',') : input === undefined || input === null ? [] : [input];
+  const ids = [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (typeof item === 'string' && item.trim() === '') continue;
+    const id = parseUuid(typeof item === 'string' ? item.trim() : item, name);
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  if (ids.length === 0) throw new HttpError(400, `"${name}" must contain at least one id`, { field: name });
+  if (ids.length > max) throw new HttpError(400, `"${name}" may contain at most ${max} ids`, { field: name, max, received: ids.length });
+  return ids;
 }
 
 /**

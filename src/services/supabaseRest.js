@@ -75,6 +75,10 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
 
     selectOne: async (token, table, query) => (await request({ token, table, query, single: true })).data,
 
+    /** Deletes rows matching `query`. Returns the deleted rows (so callers can count them). */
+    remove: async (token, table, query) =>
+      (await request({ token, method: 'DELETE', table, query, prefer: 'return=representation' })).data ?? [],
+
     /** Like select, but also returns the total row count ignoring limit/offset. */
     selectPage: async (token, table, query) => {
       const { data, headers } = await request({ token, table, query, prefer: 'count=exact' });
