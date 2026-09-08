@@ -64,6 +64,7 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
   const single = forums.length === 1;
   const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
   const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
+  const voices = single ? [`How people write there — ${forums[0].voice}`] : ['How people write on each site (match the one each thread is on):', ...forums.map((f) => `- ${f.voice}`)];
   const ranking = single
     ? 'Rank by how strongly the author is seeking something like this product.'
     : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
@@ -87,11 +88,14 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     '',
     ...hints,
     '',
-    'For each thread you include, also draft a reply we could post there (the "suggested_reply" field):',
-    "- open by engaging with the author's actual situation, in their own terms, not with our product",
-    '- mention the product once, plainly, as a suggestion, and say plainly that we make it',
-    '- match the register of the site and the author: no marketing language, no greeting or sign-off, no links, no bullet points',
-    '- 40 to 80 words, and leave anything they did not tell us unstated rather than inventing it',
+    'For each thread you include, draft the reply we would post there (the "suggested_reply" field). Write as the person who built the product, replying to someone whose problem you recognise because you have had it.',
+    '',
+    ...voices,
+    '',
+    'Mirror the author you are replying to. If they wrote three blunt lines, write three blunt lines. If they wrote a careful paragraph, match that. Use their words for their problem, not ours.',
+    "Open with something concrete about their situation. Say what the product does in one plain sentence, the way a user would say it, and mention once that you built it. 40 to 80 words.",
+    'Type like a person: contractions, plain words, specifics. Never open with "Great question", "I totally understand" or "I feel your pain". Never write "solution", "leverage", "streamline", "seamless", "game-changer", "reach out", "Hope this helps" or "Feel free to". No exclamation marks, no sign-off, no links.',
+    'If the product does not genuinely fit what they asked for, say less rather than stretching.',
     '',
     `${ranking} Only include threads whose URL appeared in your search results. Return JSON matching the schema.`,
   ].join('\n');
@@ -349,12 +353,12 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
 
   const requestBody = {
     model,
-    temperature: 0.3,
+    temperature: 0.7,
     messages: [
       {
         role: 'system',
         content:
-          'You write short, plain replies that a founder can post on a public forum thread where someone is asking for the kind of thing they sell. You are helpful first and promotional second. You never write marketing copy, and you always disclose that the writer makes the product.',
+          'You write the way people actually write on forums: first person, plain, specific, a little informal. You are a founder replying to someone who has the problem you built something for. You are helpful first and promotional second, you never sound like marketing copy or customer support, and you always disclose that you make the product.',
       },
       {
         role: 'user',
@@ -366,15 +370,13 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
           product.description,
           '"""',
           '',
-          'Write one reply we can post on forum threads where someone is asking for a solution like this. It is a starting point that a person will adapt to each thread, so it must read naturally on its own and be easy to edit.',
+          'Write one reply we can post on forum threads where someone is asking for a solution like this. A person will adapt it to each thread, so it has to read naturally on its own and be easy to edit.',
           '',
-          'Rules:',
-          '- speak as the person who makes it, and say so plainly (for example "I built" or "I work on")',
-          '- lead with something useful about the problem, not with the product',
-          '- describe what it does in one plain sentence, the way a user would say it',
-          '- 50 to 90 words, no greeting, no sign-off, no links, no bullet points, no marketing adjectives, no exclamation marks',
-          '- do not claim results, pricing, or features beyond what is described above',
-          '- leave the specifics of any one thread out; the person posting will add those',
+          'Write as the person who built it, talking to someone who has just described a problem you have had yourself. Plain spoken, first person, contractions, the way you would actually type on a forum rather than the way a company writes.',
+          'Lead with the problem, not the product. Say what it does in one plain sentence, the way a user would say it, and mention once that you built it.',
+          '50 to 90 words. No greeting, no sign-off, no links, no bullet points.',
+          'Never write "Great question", "I totally understand", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless", "robust" or "game-changer". No exclamation marks.',
+          'Do not claim results, pricing or features beyond the description above. Leave the specifics of any one thread out; the person posting will add those.',
           '',
           'Also give one sentence of notes on what to change per thread. Return JSON matching the schema.',
         ]
@@ -419,7 +421,8 @@ export async function searchThreads({ productDescription, forums, threads, from,
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
   const requestBody = {
     model,
-    temperature: 0.1,
+    // Low enough to keep extraction reliable, high enough that the drafted replies do not read like a template.
+    temperature: 0.3,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },

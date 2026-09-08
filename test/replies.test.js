@@ -15,10 +15,13 @@ const reddit = getForum('reddit');
 
 // ---------- per-thread reply from the search call ----------
 
-test('the search prompt asks for a reply per thread and the schema requires it', () => {
+test('the search prompt asks for a reply per thread in the forum own voice', () => {
   const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /also draft a reply we could post there/);
-  assert.match(p, /say plainly that we make it/);
+  assert.match(p, /How people write there — Reddit: casual and blunt/);
+  assert.match(p, /Mirror the author you are replying to/);
+  assert.match(p, /Never write "solution", "leverage"/);
+  assert.match(p, /draft the reply we would post there/);
+  assert.match(p, /mention once that you built it/);
   assert.match(p, /40 to 80 words/);
 });
 
@@ -46,7 +49,9 @@ test('composeGeneralReply sends the product, scopes search to its site, and trim
   assert.deepEqual(captured.search_domain_filter, ['followup.app']);
   assert.match(captured.messages[1].content, /Product name: FollowUp/);
   assert.match(captured.messages[1].content, /Reminds owners to follow up/);
-  assert.match(captured.messages[1].content, /say so plainly/);
+  assert.match(captured.messages[1].content, /the way you would actually type on a forum/);
+  assert.match(captured.messages[1].content, /Never write "Great question"/);
+  assert.equal(captured.temperature, 0.7, 'writing needs more room than extraction');
   assert.equal(out.reply, 'I lost quotes this way for years. I build FollowUp, which nudges you until you call a lead back.');
   assert.equal(out.notes, 'Name the tool they mentioned.');
 });
@@ -122,4 +127,11 @@ test('POST /api/products/:id/reply composes and stores the general reply', async
   assert.equal(storedReply, 'reply for P');
   assert.equal((await fetch(`${base}/api/products/${OTHER}/reply`, { method: 'POST', headers: auth })).status, 404);
   assert.equal((await fetch(`${base}/api/products/${PID}/reply`, { method: 'POST' })).status, 401);
+});
+
+test('a multi-forum search lists each site voice so the model can match the thread it replies to', () => {
+  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit, getForum('hackernews'), getForum('x')], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(p, /match the one each thread is on/);
+  assert.match(p, /- Hacker News: plain, dry, understated/);
+  assert.match(p, /- X: very short and clipped/);
 });
