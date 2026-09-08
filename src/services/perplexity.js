@@ -7,6 +7,7 @@ const SYSTEM_PROMPT = [
   'You are looking for demand, not supply. A thread only counts if its author is seeking a solution.',
   'Threads that present, promote, launch, review, compare, or explain solutions are not leads and must be left out, even when they are about the exact product category.',
   'You only report real threads whose URLs appear in your search results. Never invent, guess, or alter URLs.',
+  'When you draft a reply, you state only what the product description supports. You never claim to have had the problem yourself, never describe using the product, and never invent any experience, result, or feature.',
   'If you find nothing that qualifies, return an empty list rather than padding it with weaker matches.',
 ].join(' ');
 
@@ -60,7 +61,7 @@ const joinNames = (names) => (names.length <= 1 ? names[0] ?? '' : `${names.slic
 
 const isoDay = (date) => date.toISOString().slice(0, 10);
 
-export function buildUserPrompt({ productDescription, forums, threads, from, to }) {
+export function buildUserPrompt({ productDescription, website, forums, threads, from, to }) {
   const single = forums.length === 1;
   const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
   const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
@@ -88,14 +89,16 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     '',
     ...hints,
     '',
-    'For each thread you include, draft the reply we would post there (the "suggested_reply" field). Write as the person who built the product, replying to someone whose problem you recognise because you have had it.',
+    'For each thread you include, draft the reply we would post there (the "suggested_reply" field).',
     '',
     ...voices,
     '',
-    'Mirror the author you are replying to. If they wrote three blunt lines, write three blunt lines. If they wrote a careful paragraph, match that. Use their words for their problem, not ours.',
-    "Open with something concrete about their situation. Say what the product does in one plain sentence, the way a user would say it, and mention once that you built it. 40 to 80 words.",
-    'Type like a person: contractions, plain words, specifics. Never open with "Great question", "I totally understand" or "I feel your pain". Never write "solution", "leverage", "streamline", "seamless", "game-changer", "reach out", "Hope this helps" or "Feel free to". No exclamation marks, no sign-off, no links.',
-    'If the product does not genuinely fit what they asked for, say less rather than stretching.',
+    'Match the length and register of the author you are replying to, and use their words for their problem.',
+    'Say which part of what they asked for the product actually handles, and what it does about it, in plain words. Mention once that you built it, so the promotion is disclosed.',
+    website ? `Point them at it with the bare link, once: ${website}` : 'There is no link to give, so do not invent one.',
+    'Do not open with sympathy or agreement. Do not claim to have had their problem, to use the product yourself, or to have any experience you were not given. Claim nothing the product description does not support.',
+    '40 to 80 words. Contractions and plain words. No greeting, no sign-off, no exclamation marks, no bullet points. Never write "Great question", "I totally understand", "I feel your pain", "I ran into the same", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless" or "game-changer".',
+    'If the product does not genuinely fit what they asked for, leave the thread out rather than stretching.',
     '',
     `${ranking} Only include threads whose URL appeared in your search results. Return JSON matching the schema.`,
   ].join('\n');
@@ -358,7 +361,7 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
       {
         role: 'system',
         content:
-          'You write the way people actually write on forums: first person, plain, specific, a little informal. You are a founder replying to someone who has the problem you built something for. You are helpful first and promotional second, you never sound like marketing copy or customer support, and you always disclose that you make the product.',
+          'You write the way people actually write on forums: first person, plain, specific, a little informal. You are the person who built the product, replying to someone who has the problem it addresses. You never sound like marketing copy or customer support. You always disclose that you made it, and you never claim experience, results, or features you were not given.',
       },
       {
         role: 'user',
@@ -370,13 +373,15 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
           product.description,
           '"""',
           '',
-          'Write one reply we can post on forum threads where someone is asking for a solution like this. A person will adapt it to each thread, so it has to read naturally on its own and be easy to edit.',
+          'Write one reply we can post on forum threads where someone is asking for something like this. A person will adapt it to each thread, so it has to read naturally on its own and be easy to edit.',
           '',
-          'Write as the person who built it, talking to someone who has just described a problem you have had yourself. Plain spoken, first person, contractions, the way you would actually type on a forum rather than the way a company writes.',
-          'Lead with the problem, not the product. Say what it does in one plain sentence, the way a user would say it, and mention once that you built it.',
-          '50 to 90 words. No greeting, no sign-off, no links, no bullet points.',
-          'Never write "Great question", "I totally understand", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless", "robust" or "game-changer". No exclamation marks.',
-          'Do not claim results, pricing or features beyond the description above. Leave the specifics of any one thread out; the person posting will add those.',
+          'Write as the person who built it, replying to someone who has that problem. Plain spoken, first person, contractions, the way you would type on a forum rather than the way a company writes.',
+          'Say what the product does about the problem, in one or two plain sentences, the way a user would say it. Mention once that you built it, so the promotion is disclosed.',
+          product.website ? `Point them at it with the bare link, once: ${product.website}` : 'There is no link to give, so do not invent one.',
+          'Do not open with sympathy or agreement. Do not claim to have had the problem yourself, to use the product yourself, or to have any experience you were not given.',
+          '50 to 90 words. No greeting, no sign-off, no bullet points, no exclamation marks.',
+          'Never write "Great question", "I totally understand", "I ran into the same", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless", "robust" or "game-changer".',
+          'Claim nothing the description above does not support: no results, no pricing, no features it does not mention. Leave the specifics of any one thread out; the person posting will add those.',
           '',
           'Also give one sentence of notes on what to change per thread. Return JSON matching the schema.',
         ]
@@ -408,6 +413,7 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
  *
  * @param {object} params
  * @param {string} params.productDescription
+ * @param {string|null} [params.productWebsite]  linked once in each drafted reply
  * @param {object[]} params.forums   entries from the forum registry
  * @param {number} params.threads    max results to return in total
  * @param {Date} params.from         first day to include (UTC)
@@ -416,7 +422,7 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
  * @param {Function} [params.fetchImpl]  injectable fetch for tests
  * @param {Date} [params.now]            injectable clock for tests
  */
-export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
+export async function searchThreads({ productDescription, productWebsite = null, forums, threads, from, to, config, fetchImpl = fetch }) {
   const { model, searchContextSize } = config.perplexity;
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
   const requestBody = {
@@ -425,7 +431,7 @@ export async function searchThreads({ productDescription, forums, threads, from,
     temperature: 0.3,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
+      { role: 'user', content: buildUserPrompt({ productDescription, website: productWebsite, forums, threads, from, to }) },
     ],
     search_domain_filter: domains,
     // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.

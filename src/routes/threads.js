@@ -38,7 +38,7 @@ export function threadsRouter({ config, search = searchThreads, products, result
     const params = parseSearchRequest({ ...source, productDescription: override || product.description }, config);
 
     const searchDate = new Date();
-    const found = await search({ ...params, config, user: req.user });
+    const found = await search({ ...params, productWebsite: product.website ?? null, config, user: req.user });
     const stored = await results.save(token, productId, found.threads, { searchDate });
     const idByLink = new Map(stored.map((r) => [r.link, r.id]));
     const threads = found.threads.map((t) => ({ id: idByLink.get(t.url) ?? null, ...t }));

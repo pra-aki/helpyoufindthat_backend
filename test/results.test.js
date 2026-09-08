@@ -84,9 +84,10 @@ const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_AN
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
-const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'stored description' }; }, list: async () => [], create: async () => ({}) };
+const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'stored description', website: 'https://p.example/' }; }, list: async () => [], create: async () => ({}) };
 let searchCalls = 0;
-const fakeSearch = async () => { searchCalls++; return { threads: [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews' })], meta: { model: 'fake' } }; };
+let lastSearch = null;
+const fakeSearch = async (args) => { searchCalls++; lastSearch = args; return { threads: [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews' })], meta: { model: 'fake' } }; };
 const saved = [];
 const fakeResults = {
   save: async (token, productId, threads, { searchDate }) => { const rows = threads.map((t, i) => ({ id: `r${i}`, productId, link: t.url, searchDate: searchDate.toISOString() })); saved.push(...rows); return rows; },
@@ -113,6 +114,7 @@ test('search with productId uses the stored description, stores the threads, and
   assert.ok(body.saved.searchDate);
   assert.deepEqual(body.threads.map((t) => t.id), ['r0', 'r1']);
   assert.equal(body.query.productDescription, 'stored description');
+  assert.equal(lastSearch.productWebsite, 'https://p.example/', "the product's website reaches the reply drafting");
   assert.equal(saved.length, 2);
 });
 

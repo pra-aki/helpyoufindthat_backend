@@ -18,10 +18,10 @@ const reddit = getForum('reddit');
 test('the search prompt asks for a reply per thread in the forum own voice', () => {
   const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
   assert.match(p, /How people write there — Reddit: casual and blunt/);
-  assert.match(p, /Mirror the author you are replying to/);
-  assert.match(p, /Never write "solution", "leverage"/);
+  assert.match(p, /Match the length and register of the author/);
+  assert.match(p, /Never write "Great question"/);
   assert.match(p, /draft the reply we would post there/);
-  assert.match(p, /mention once that you built it/);
+  assert.match(p, /Mention once that you built it/);
   assert.match(p, /40 to 80 words/);
 });
 
@@ -49,8 +49,10 @@ test('composeGeneralReply sends the product, scopes search to its site, and trim
   assert.deepEqual(captured.search_domain_filter, ['followup.app']);
   assert.match(captured.messages[1].content, /Product name: FollowUp/);
   assert.match(captured.messages[1].content, /Reminds owners to follow up/);
-  assert.match(captured.messages[1].content, /the way you would actually type on a forum/);
+  assert.match(captured.messages[1].content, /the way you would type on a forum/);
   assert.match(captured.messages[1].content, /Never write "Great question"/);
+  assert.match(captured.messages[1].content, /Point them at it with the bare link, once: https:\/\/www\.followup\.app\//);
+  assert.match(captured.messages[1].content, /Do not claim to have had the problem yourself/);
   assert.equal(captured.temperature, 0.7, 'writing needs more room than extraction');
   assert.equal(out.reply, 'I lost quotes this way for years. I build FollowUp, which nudges you until you call a lead back.');
   assert.equal(out.notes, 'Name the tool they mentioned.');
@@ -134,4 +136,28 @@ test('a multi-forum search lists each site voice so the model can match the thre
   assert.match(p, /match the one each thread is on/);
   assert.match(p, /- Hacker News: plain, dry, understated/);
   assert.match(p, /- X: very short and clipped/);
+});
+
+test('replies must not invent experience, and the product link is passed through', () => {
+  const withSite = buildUserPrompt({ productDescription: 'X', website: 'https://acme.com/', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(withSite, /Point them at it with the bare link, once: https:\/\/acme\.com\//);
+  assert.match(withSite, /Do not open with sympathy or agreement/);
+  assert.match(withSite, /Do not claim to have had their problem, to use the product yourself/);
+  assert.match(withSite, /"I ran into the same"/);
+
+  const noSite = buildUserPrompt({ productDescription: 'X', website: null, forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(noSite, /no link to give, so do not invent one/);
+  assert.ok(!/bare link, once/.test(noSite));
+});
+
+test('no forum voice tells the model to claim its own experience', () => {
+  for (const f of [reddit, getForum('hackernews'), getForum('x'), getForum('quora'), getForum('linkedin-groups'), getForum('facebook-groups')]) {
+    assert.ok(!/your own (experience|work)|we had this exact/i.test(f.voice), `${f.id} voice invites invented experience`);
+  }
+});
+
+test('composeGeneralReply with no website tells the model not to invent a link', async () => {
+  let captured;
+  await composeGeneralReply({ product: { name: 'N', website: null, description: 'd' }, config: pplx, fetchImpl: async (u, init) => { captured = JSON.parse(init.body); return jsonRes({ choices: [{ message: { content: JSON.stringify({ reply: 'r', notes: 'n' }) } }] }); } });
+  assert.match(captured.messages[1].content, /no link to give, so do not invent one/);
 });
