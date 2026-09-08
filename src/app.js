@@ -24,7 +24,7 @@ export function createApp({ config, search, verify, products, results } = {}) {
   app.use(
     cors({
       origin: config.cors.origins.length ? config.cors.origins : true,
-      methods: ['GET', 'POST', 'OPTIONS'],
+      methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Authorization', 'Content-Type'],
       maxAge: 600,
     }),

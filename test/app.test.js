@@ -141,6 +141,7 @@ test('CORS: allowed origin is echoed, others are not, and preflight succeeds', a
   const pre = await fetch(`${base}/api/threads`, { method: 'OPTIONS', headers: { origin: 'https://app.example.com', 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' } });
   assert.equal(pre.status, 204);
   assert.match(pre.headers.get('access-control-allow-headers'), /authorization/i);
+  assert.match(pre.headers.get('access-control-allow-methods'), /PATCH/, 'PATCH must be allowed for product edits');
 });
 
 test('malformed JSON body is a 400, unknown route is a 404', async () => {
