@@ -55,7 +55,7 @@ Lists supported forums with their ids, aliases, and searched domains.
 | `productId` | yes | | UUID of one of your products (see `POST /api/products`). Its stored description drives the search, and the results are stored under it. |
 | `productDescription` | no | the product's | One-off override of the description for this search only. Max 2000 chars. |
 | `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
-| `threads` | no | 10 | Max number of threads to return in total, across all requested forums (1 to 50). Also accepted as `x` or `maxThreads`. |
+| `threads` | no | 10 | How many threads to return in total, across all requested forums (1 to 50). Weaker matches fill the count with low scores rather than being left out. Also accepted as `x` or `maxThreads`. |
 | `from` | no | | First day to include, `YYYY-MM-DD` (UTC). Also `startDate` / `start_date`. |
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
@@ -211,7 +211,7 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 - `search_after_date_filter` and `search_before_date_filter` set from the requested range (Perplexity does not allow combining these with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
-The prompt is aimed at demand, not supply: it asks for threads where users are looking for a recommendation, tool, service, alternative, or advice for a problem the product solves, and gives the product description as the thing to match. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
+The prompt is aimed at demand, not supply: it asks for threads where users are looking for a recommendation, tool, service, alternative, or advice for a problem the product solves, and gives the product description as the thing to match. Launches, "Show HN" and "I built" posts, reviews, comparisons, and tutorials are never included, at any score. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server drops `offering` threads. General discussion and loose fits are kept with a relevance score of 0.3 or lower, so a search returns the number of threads requested whenever the search results contain that many; use `minScore` on the results endpoint to hide them.
 
 Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
 

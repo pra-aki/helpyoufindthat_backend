@@ -28,7 +28,7 @@ const RESPONSE_SCHEMA = {
           posted_at: { type: 'string', description: 'When it was posted, as ISO 8601 date if known, otherwise empty string' },
           relevance_score: {
             type: 'number',
-            description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; below 0.3 = tangential',
+            description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; 0.3 or lower = general discussion of the topic or a loose fit, included to fill the requested count',
           },
         },
         required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
@@ -56,19 +56,19 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     ? 'Rank by how strongly the author is seeking something like this product.'
     : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
   return [
-    `Search for up to ${threads} threads or discussions in user forums on ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:`,
+    `Search for ${threads} threads or discussions in user forums on ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:`,
     '',
     '"""',
     productDescription,
     '"""',
     '',
-    'Include only threads where the author is seeking. Exclude:',
+    'Never include posts that offer rather than ask:',
     '- product launches, announcements, "I built", "Show HN", "check out my", or anything promoting a solution',
     '- reviews, comparisons, "best tools for" lists, tutorials, how-to guides, news, and opinion pieces',
     '- posts where the author already has a solution and is sharing or explaining it',
-    '- general discussion of the topic with no request in it',
-    'Threads like these are still "offering" or "discussion" even if the topic matches the product exactly.',
+    'Posts like these are "offering" even if the topic matches the product exactly, so leave them out at any score.',
     'A partial fit still counts. If the product would help with part of what the author is asking about, include the thread and score it accordingly.',
+    `Return ${threads} threads. If fewer than ${threads} strongly match, fill the rest with the closest weaker matches, such as general discussion of the topic or a loose fit, and give those a relevance score of 0.3 or lower. Do not return fewer than ${threads} while real threads remain in your search results.`,
     '',
     `${ranking} Only include threads whose URL appeared in your search results, copied exactly; never invent, guess, or alter a URL.`,
     '',
@@ -162,7 +162,8 @@ export function parseThreadsResponse(data, { forums, threads }) {
     seen.add(key);
 
     // The model labels each thread's intent; anything that isn't someone seeking a solution is not a lead.
-    if (typeof item.intent === 'string' && item.intent !== 'seeking') continue;
+    // Promotions are never leads. Everything else is kept and ranked by its score, so weak matches fill the count.
+    if (item.intent === 'offering') continue;
 
     const fromSearch = byUrl.get(key);
     results.push({
