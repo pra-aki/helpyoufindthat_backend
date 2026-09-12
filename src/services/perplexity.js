@@ -8,7 +8,6 @@ const SYSTEM_PROMPT = [
   'You are looking for demand, not supply. A thread only counts if its author is seeking a solution.',
   'Threads that present, promote, launch, review, compare, or explain solutions are not leads and must be left out, even when they are about the exact product category.',
   'You only report real threads whose URLs appear in your search results. Never invent, guess, or alter URLs.',
-  'When you draft a reply, you state only what the product description supports. You never claim to have had the problem yourself, never describe using the product, and never invent any experience, result, or feature.',
   'If you find nothing that qualifies, return an empty list rather than padding it with weaker matches.',
 ].join(' ');
 
@@ -34,17 +33,13 @@ const RESPONSE_SCHEMA = {
           asks_for: { type: 'string', description: 'What the author is asking for, in a few words; empty if intent is not seeking' },
           summary: { type: 'string', description: 'One or two sentences describing the situation the author describes' },
           why_relevant: { type: 'string', description: 'Why this person is a potential customer for the described product' },
-          suggested_reply: {
-            type: 'string',
-            description: "A reply we could post on this thread: engages with the author's own situation, mentions the product once as a suggestion, and discloses that we make it",
-          },
           posted_at: { type: 'string', description: 'When it was posted, as ISO 8601 date if known, otherwise empty string' },
           relevance_score: {
             type: 'number',
             description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; below 0.3 = tangential',
           },
         },
-        required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'suggested_reply', 'posted_at', 'relevance_score'],
+        required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
       },
     },
   },
@@ -62,11 +57,10 @@ const joinNames = (names) => (names.length <= 1 ? names[0] ?? '' : `${names.slic
 
 const isoDay = (date) => date.toISOString().slice(0, 10);
 
-export function buildUserPrompt({ productDescription, website, forums, threads, from, to }) {
+export function buildUserPrompt({ productDescription, forums, threads, from, to }) {
   const single = forums.length === 1;
   const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
   const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
-  const voices = single ? [`How people write there — ${forums[0].voice}`] : ['How people write on each site (match the one each thread is on):', ...forums.map((f) => `- ${f.voice}`)];
   const ranking = single
     ? 'Rank by how strongly the author is seeking something like this product.'
     : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
@@ -92,17 +86,6 @@ export function buildUserPrompt({ productDescription, website, forums, threads, 
     ...hints,
     '',
     `${ranking} Only include threads whose URL appeared in your search results.`,
-    '',
-    'SECOND TASK, once you have chosen those threads: for each thread you are returning, draft the reply we would post there (the "suggested_reply" field). This is a writing task only. It must not change which threads you return or how you rank them.',
-    '',
-    ...voices,
-    '',
-    'Match the length and register of the author you are replying to, and use their words for their problem.',
-    'Say which part of what they asked for the product actually handles, and what it does about it, in plain words. Mention once that you built it, so the promotion is disclosed.',
-    website ? `Point them at it with the bare link, once: ${website}` : 'There is no link to give, so do not invent one.',
-    'Do not open with sympathy or agreement. Do not claim to have had their problem, to use the product yourself, or to have any experience you were not given. Claim nothing the product description does not support.',
-    '40 to 80 words. Contractions and plain words. No greeting, no sign-off, no exclamation marks, no bullet points. Never write "Great question", "I totally understand", "I feel your pain", "I ran into the same", "Hope this helps", "Feel free to", "reach out", "solution", "leverage", "streamline", "seamless" or "game-changer".',
-    'If the product only partly fits what the author asked for, write a shorter reply about the part it does fit. Still return the thread.',
     '',
     'Return JSON matching the schema.',
   ].join('\n');
@@ -203,7 +186,6 @@ export function parseThreadsResponse(data, { forums, threads }) {
       asksFor: String(item.asks_for ?? '').trim() || null,
       summary: String(item.summary ?? '').trim(),
       whyRelevant: String(item.why_relevant ?? '').trim(),
-      suggestedReply: String(item.suggested_reply ?? '').trim() || null,
       postedAt: String(item.posted_at || fromSearch?.date || '').trim() || null,
       relevanceScore: clampScore(item.relevance_score),
       source: forum.id,
@@ -483,7 +465,6 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
  *
  * @param {object} params
  * @param {string} params.productDescription
- * @param {string|null} [params.productWebsite]  linked once in each drafted reply
  * @param {object[]} params.forums   entries from the forum registry
  * @param {number} params.threads    max results to return in total
  * @param {Date} params.from         first day to include (UTC)
@@ -492,7 +473,7 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
  * @param {Function} [params.fetchImpl]  injectable fetch for tests
  * @param {Date} [params.now]            injectable clock for tests
  */
-export async function searchThreads({ productDescription, productWebsite = null, forums, threads, from, to, config, fetchImpl = fetch }) {
+export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
   const { model, searchContextSize } = config.perplexity;
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
   const requestBody = {
@@ -502,7 +483,7 @@ export async function searchThreads({ productDescription, productWebsite = null,
     temperature: 0.1,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ productDescription, website: productWebsite, forums, threads, from, to }) },
+      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
     ],
     search_domain_filter: domains,
     // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.

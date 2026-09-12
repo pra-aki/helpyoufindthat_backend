@@ -6,35 +6,44 @@ import { HttpError } from '../src/errors.js';
 import { parseProductRequest } from '../src/validation.js';
 import { createProductsService } from '../src/services/products.js';
 import { createResultsService } from '../src/services/results.js';
-import { composeGeneralReply, parseThreadsResponse, buildUserPrompt } from '../src/services/perplexity.js';
+import { composeGeneralReply, parseThreadsResponse, buildUserPrompt, searchThreads } from '../src/services/perplexity.js';
 import { getForum } from '../src/forums/index.js';
 
 const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const pplx = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 const reddit = getForum('reddit');
 
-// ---------- per-thread reply from the search call ----------
+// ---------- search no longer drafts replies ----------
 
-test('the search prompt asks for a reply per thread in the forum own voice', () => {
-  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /How people write there — Reddit: casual and blunt/);
-  assert.match(p, /Match the length and register of the author/);
-  assert.match(p, /Never write "Great question"/);
-  assert.match(p, /draft the reply we would post there/);
-  assert.match(p, /Mention once that you built it/);
-  assert.match(p, /40 to 80 words/);
+test('the search prompt asks for threads only, with no reply-writing instructions', () => {
+  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit, getForum('hackernews')], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  for (const gone of ['SECOND TASK', 'suggested_reply', 'bare link', 'How people write', 'Match the length and register', '40 to 80 words']) {
+    assert.ok(!p.includes(gone), `prompt should not contain "${gone}"`);
+  }
+  assert.match(p, /A partial fit still counts/);
+  assert.match(p, /Only include threads whose URL appeared in your search results\.\n\nReturn JSON matching the schema\.$/);
 });
 
-test('suggested_reply is carried through parsing, empty becomes null', () => {
-  const data = {
-    choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [
-      { title: 'A', url: 'https://www.reddit.com/r/a/comments/a1/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: '  I had the same problem. I work on a thing that nags you.  ', posted_at: '', relevance_score: 0.9 },
-      { title: 'B', url: 'https://www.reddit.com/r/a/comments/b2/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: '', posted_at: '', relevance_score: 0.8 },
-    ] }) } }],
-  };
-  const out = parseThreadsResponse(data, { forums: [reddit], threads: 10 });
-  assert.equal(out[0].suggestedReply, 'I had the same problem. I work on a thing that nags you.');
-  assert.equal(out[1].suggestedReply, null);
+test('the search schema has no suggested_reply and parsed threads carry none', async () => {
+  let body;
+  await searchThreads({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z'), config: pplx, fetchImpl: async (u, init) => { body = JSON.parse(init.body); return jsonRes({ choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [] }) } }] }); } });
+  const item = body.response_format.json_schema.schema.properties.threads.items;
+  assert.ok(!('suggested_reply' in item.properties));
+  assert.ok(!item.required.includes('suggested_reply'));
+  assert.ok(!body.messages[0].content.includes('draft a reply'), 'system prompt has no reply rules');
+
+  const out = parseThreadsResponse({ choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [{ title: 'A', url: 'https://www.reddit.com/r/a/comments/a1/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: 'stray draft', posted_at: '', relevance_score: 0.9 }] }) } }] }, { forums: [reddit], threads: 5 });
+  assert.equal(out.length, 1);
+  assert.ok(!('suggestedReply' in out[0]), 'a stray draft from the model is ignored');
+});
+
+test('results are stored and returned without a reply', async () => {
+  let sent;
+  const db = { upsert: async (t, table, rows) => { sent = rows; return rows.map((r, i) => ({ id: `r${i}`, suggested_reply: 'old draft still in the column', ...r })); } };
+  const svc = createResultsService(db);
+  const stored = await svc.save('t', 'p1', [{ url: 'https://www.reddit.com/r/a/comments/x/y/', source: 'reddit', title: 'T', summary: 's', whyRelevant: 'w', postedAt: null, relevanceScore: 0.5 }]);
+  assert.ok(!('suggested_reply' in sent[0]), 'the column is not written');
+  assert.ok(!('suggestedReply' in stored[0]), 'an old draft left in the column is not returned');
 });
 
 // ---------- general reply composer ----------
@@ -93,15 +102,6 @@ test('parseProductRequest accepts an optional generalReply', () => {
   assert.throws(() => parseProductRequest({ name: 'N', description: 'd', generalReply: 'x'.repeat(4001) }), (e) => e.status === 400);
 });
 
-test('results service stores and returns the drafted reply', async () => {
-  let sent;
-  const db = { upsert: async (t, table, rows) => { sent = rows; return rows.map((r, i) => ({ id: `r${i}`, ...r })); } };
-  const svc = createResultsService(db);
-  const stored = await svc.save('t', 'p1', [{ url: 'https://www.reddit.com/r/a/comments/x/y/', source: 'reddit', title: 'T', summary: 's', whyRelevant: 'w', suggestedReply: 'draft', postedAt: null, relevanceScore: 0.5 }]);
-  assert.equal(sent[0].suggested_reply, 'draft');
-  assert.equal(stored[0].suggestedReply, 'draft');
-});
-
 // ---------- HTTP ----------
 
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
@@ -131,25 +131,6 @@ test('POST /api/products/:id/reply composes and stores the general reply', async
   assert.equal((await fetch(`${base}/api/products/${PID}/reply`, { method: 'POST' })).status, 401);
 });
 
-test('a multi-forum search lists each site voice so the model can match the thread it replies to', () => {
-  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit, getForum('hackernews'), getForum('x')], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /match the one each thread is on/);
-  assert.match(p, /- Hacker News: plain, dry, understated/);
-  assert.match(p, /- X: very short and clipped/);
-});
-
-test('replies must not invent experience, and the product link is passed through', () => {
-  const withSite = buildUserPrompt({ productDescription: 'X', website: 'https://acme.com/', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(withSite, /Point them at it with the bare link, once: https:\/\/acme\.com\//);
-  assert.match(withSite, /Do not open with sympathy or agreement/);
-  assert.match(withSite, /Do not claim to have had their problem, to use the product yourself/);
-  assert.match(withSite, /"I ran into the same"/);
-
-  const noSite = buildUserPrompt({ productDescription: 'X', website: null, forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(noSite, /no link to give, so do not invent one/);
-  assert.ok(!/bare link, once/.test(noSite));
-});
-
 test('no forum voice tells the model to claim its own experience', () => {
   for (const f of [reddit, getForum('hackernews'), getForum('x'), getForum('quora'), getForum('linkedin-groups'), getForum('facebook-groups')]) {
     assert.ok(!/your own (experience|work)|we had this exact/i.test(f.voice), `${f.id} voice invites invented experience`);
@@ -162,16 +143,3 @@ test('composeGeneralReply with no website tells the model not to invent a link',
   assert.match(captured.messages[1].content, /no link to give, so do not invent one/);
 });
 
-test('choosing threads is separated from writing replies, and a partial fit is kept', () => {
-  const p = buildUserPrompt({ productDescription: 'X', website: 'https://a.com/', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /A partial fit still counts/);
-  assert.match(p, /It must not change which threads you return or how you rank them/);
-  assert.match(p, /write a shorter reply about the part it does fit\. Still return the thread/);
-  assert.ok(!/leave the thread out rather than stretching/.test(p), 'the reply rules must not drop leads');
-
-  // every instruction about choosing and ranking comes before the reply section
-  const replySection = p.indexOf('SECOND TASK');
-  for (const marker of ['are ASKING for a solution', 'Include only threads where the author is seeking', 'A partial fit still counts', 'Only include threads whose URL appeared', 'Rank by how strongly']) {
-    assert.ok(p.indexOf(marker) > -1 && p.indexOf(marker) < replySection, `"${marker}" should come before the reply instructions`);
-  }
-});

@@ -87,7 +87,6 @@ Response:
       "title": "What CRM do you use for follow-ups?",
       "url": "https://www.reddit.com/r/smallbusiness/comments/.../",
       "asksFor": "a simple way to get reminded to call leads back",
-      "suggestedReply": "Losing quotes between the job and the callback is the usual failure, not forgetting the customer. I build FollowUp, which nudges you until you've actually called a lead back. Happy to explain how we handle the timing if it's useful.",
       "summary": "Poster runs a landscaping company and keeps forgetting to call leads back.",
       "whyRelevant": "Explicitly asking for a follow-up reminder tool.",
       "postedAt": "2026-08-30",
@@ -214,9 +213,7 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 
 The prompt is aimed at demand, not supply: it frames the product as something you sell, asks the model to first state the problem a potential customer would have in their own words, and then to find people who have that problem and are asking for a solution. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
 
-Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread also carries `suggestedReply`, a draft written for that specific thread: it engages with the author's own situation, mentions the product once as a suggestion, discloses that you make it, and runs 40 to 80 words. It is generated inside the same search call, because that call has the retrieved thread content in context while a later call would only see the title and summary. The draft is written in the voice of the site it will be posted on, and mirrors the author it answers: a blunt three-line Reddit post gets a blunt three-line reply, a careful Hacker News comment gets a dry, specific one. Each forum's register lives in its file in `src/forums/`, next to its thread hint. Drafts are stored alongside the lead and returned by the results endpoint. Nothing is ever posted anywhere; these are drafts for a person to edit.
-
-Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
+Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
 
 The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 

@@ -59,7 +59,7 @@ test('save maps threads to rows, dedupes links within a batch, and returns store
   const when = new Date('2026-09-04T10:00:00Z');
   const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews', postedAt: 'unknown' }), thread()], { searchDate: when });
   assert.equal(sent.length, 2, 'duplicate link in the same batch is sent once');
-  assert.deepEqual(sent[0], { product_id: 'prod-1', source_site: 'reddit', link: 'https://www.reddit.com/r/a/comments/x1/t/', title: 'T', summary: 'S', why_relevant: 'W', suggested_reply: null, posted_at: '2026-09-01T00:00:00.000Z', relevance_score: 0.877, search_date: '2026-09-04T10:00:00.000Z' });
+  assert.deepEqual(sent[0], { product_id: 'prod-1', source_site: 'reddit', link: 'https://www.reddit.com/r/a/comments/x1/t/', title: 'T', summary: 'S', why_relevant: 'W', posted_at: '2026-09-01T00:00:00.000Z', relevance_score: 0.877, search_date: '2026-09-04T10:00:00.000Z' });
   assert.equal(sent[1].posted_at, null, 'unparseable dates become null');
   assert.deepEqual(stored.map((r) => [r.link, r.source, r.relevanceScore]), [['https://www.reddit.com/r/a/comments/x1/t/', 'reddit', 0.877], ['https://news.ycombinator.com/item?id=1', 'hackernews', 0.877]]);
   assert.deepEqual(await svc.save('tok', 'prod-1', []), [], 'nothing to save makes no request');
@@ -86,8 +86,7 @@ const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'stored description', website: 'https://p.example/' }; }, list: async () => [], create: async () => ({}) };
 let searchCalls = 0;
-let lastSearch = null;
-const fakeSearch = async (args) => { searchCalls++; lastSearch = args; return { threads: [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews' })], meta: { model: 'fake' } }; };
+const fakeSearch = async () => { searchCalls++; return { threads: [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews' })], meta: { model: 'fake' } }; };
 const saved = [];
 const fakeResults = {
   save: async (token, productId, threads, { searchDate }) => { const rows = threads.map((t, i) => ({ id: `r${i}`, productId, link: t.url, searchDate: searchDate.toISOString() })); saved.push(...rows); return rows; },
@@ -114,7 +113,6 @@ test('search with productId uses the stored description, stores the threads, and
   assert.ok(body.saved.searchDate);
   assert.deepEqual(body.threads.map((t) => t.id), ['r0', 'r1']);
   assert.equal(body.query.productDescription, 'stored description');
-  assert.equal(lastSearch.productWebsite, 'https://p.example/', "the product's website reaches the reply drafting");
   assert.equal(saved.length, 2);
 });
 
