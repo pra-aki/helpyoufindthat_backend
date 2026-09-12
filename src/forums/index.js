@@ -6,7 +6,6 @@
  *   name        - display name
  *   aliases     - other spellings accepted in requests
  *   domains     - domains passed to Perplexity's search_domain_filter
- *   threadHint  - prose telling the model what a "thread" looks like on this site
  *   isThreadUrl - (URL) => boolean, filters out index/profile pages from results
  * then import it here and append it to the `forums` array.
  */

@@ -24,7 +24,6 @@ test('every forum has the fields the search service relies on', () => {
   for (const forum of forums) {
     assert.ok(forum.id && forum.name, `${forum.id} needs id and name`);
     assert.ok(Array.isArray(forum.domains) && forum.domains.length > 0, `${forum.id} needs domains`);
-    assert.equal(typeof forum.threadHint, 'string');
     assert.ok(typeof forum.voice === 'string' && forum.voice.length > 20, `${forum.id} needs a voice description, kept for when reply drafting returns`);
     assert.equal(typeof forum.isThreadUrl, 'function');
   }

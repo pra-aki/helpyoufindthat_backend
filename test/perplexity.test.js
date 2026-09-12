@@ -42,12 +42,12 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.match(captured.body.messages[0].content, /posted between 2026-08-26 and 2026-09-02 \(inclusive\)/);
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[0].content, /A tool that does X/);
-  assert.match(captured.body.messages[0].content, /up to 3 public Reddit threads/);
+  assert.match(captured.body.messages[0].content, /^Search for up to 3 threads or discussions in user forums on Reddit posted between/);
   assert.equal(captured.body.messages.length, 1, 'search sends a single user message');
   assert.equal(captured.body.messages[0].role, 'user');
   assert.match(captured.body.messages[0].content, /never invent, guess, or alter a URL/);
-  assert.match(captured.body.messages[0].content, /return an empty list rather than padding it with weaker matches/);
-  assert.match(captured.body.messages[0].content, /ASKING for a solution/);
+  assert.ok(!captured.body.messages[0].content.includes('empty list'), 'no empty-list instruction');
+  assert.match(captured.body.messages[0].content, /where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:/);
   assert.match(captured.body.messages[0].content, /Exclude:\n- product launches/);
   assert.deepEqual(captured.body.response_format.json_schema.schema.required, ['problem', 'threads']);
   assert.deepEqual(captured.body.response_format.json_schema.schema.properties.threads.items.properties.intent.enum, ['seeking', 'offering', 'discussion']);
@@ -71,9 +71,9 @@ test('multi-forum search sends the union of domains in one call and tags each th
   const day = new Date('2026-09-04T00:00:00Z');
   const { threads, meta } = await searchThreads({ productDescription: 'd', forums: [reddit, hn, x], threads: 10, from: day, to: day, config, fetchImpl });
   assert.deepEqual(captured.search_domain_filter, ['reddit.com', 'news.ycombinator.com', 'x.com', 'twitter.com']);
-  assert.match(captured.messages[0].content, /public threads on Reddit, Hacker News and X \(Twitter\)/);
+  assert.match(captured.messages[0].content, /in user forums on Reddit, Hacker News and X \(Twitter\) posted between/);
   assert.match(captured.messages[0].content, /do not favour one site over another/);
-  assert.match(captured.messages[0].content, /- Hacker News: /);
+  assert.ok(!captured.messages[0].content.includes('What counts as a thread'), 'no per-site thread hints');
   assert.deepEqual(threads.map((t) => [t.title, t.source]), [['Reddit', 'reddit'], ['X', 'x'], ['HN', 'hackernews']]);
   assert.deepEqual(meta.searchedForums, ['reddit', 'hackernews', 'x']);
   assert.deepEqual([meta.from, meta.to], ['2026-09-04', '2026-09-04']);
@@ -161,9 +161,12 @@ test('the problem statement is surfaced in meta', async () => {
   assert.equal(meta.problem, 'I keep forgetting to follow up with leads');
 });
 
-test('prompt frames the product as something we sell and asks for the customer problem first', () => {
-  const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /^We sell this product:/);
-  assert.match(p, /state the problem a potential customer would have/);
-  assert.match(p, /people who HAVE that problem/);
+test('prompt opens with the search request, then the product, with no problem-statement step or per-site hints', () => {
+  const p = buildUserPrompt({ productDescription: 'An app that reminds owners to follow up with leads', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
+  assert.match(p, /^Search for up to 5 threads or discussions in user forums on Reddit posted between 2026-09-01 and 2026-09-02 \(inclusive\)/);
+  assert.match(p, /our product:\n\n"""\nAn app that reminds owners to follow up with leads\n"""/);
+  for (const gone of ['We sell this product', 'state the problem', 'HAVE that problem', 'Search the way those people write', 'What counts as a thread', 'A thread is a Reddit post', 'empty list']) {
+    assert.ok(!p.includes(gone), `prompt should not contain "${gone}"`);
+  }
+  assert.match(p, /A partial fit still counts/);
 });

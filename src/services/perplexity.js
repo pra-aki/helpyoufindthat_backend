@@ -51,21 +51,16 @@ const isoDay = (date) => date.toISOString().slice(0, 10);
 
 export function buildUserPrompt({ productDescription, forums, threads, from, to }) {
   const single = forums.length === 1;
-  const where = single ? `public ${forums[0].name} threads` : `public threads on ${joinNames(forums.map((f) => f.name))}`;
-  const hints = single ? [forums[0].threadHint] : ['What counts as a thread on each site:', ...forums.map((f) => `- ${f.name}: ${f.threadHint}`)];
+  const where = single ? forums[0].name : joinNames(forums.map((f) => f.name));
   const ranking = single
     ? 'Rank by how strongly the author is seeking something like this product.'
     : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
   return [
-    'We sell this product:',
+    `Search for up to ${threads} threads or discussions in user forums on ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:`,
+    '',
     '"""',
     productDescription,
     '"""',
-    '',
-    'First, state the problem a potential customer would have, in the words they would use when asking for help (the "problem" field).',
-    `Then find up to ${threads} ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) written by people who HAVE that problem and are ASKING for a solution: a recommendation, a tool, a service, an alternative, or advice on how to handle it.`,
-    '',
-    'Search the way those people write, for example: "looking for a tool that", "any recommendations for", "how do you all handle", "is there an app that", "struggling with", "what do you use for", "alternative to".',
     '',
     'Include only threads where the author is seeking. Exclude:',
     '- product launches, announcements, "I built", "Show HN", "check out my", or anything promoting a solution',
@@ -75,10 +70,7 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     'Threads like these are still "offering" or "discussion" even if the topic matches the product exactly.',
     'A partial fit still counts. If the product would help with part of what the author is asking about, include the thread and score it accordingly.',
     '',
-    ...hints,
-    '',
     `${ranking} Only include threads whose URL appeared in your search results, copied exactly; never invent, guess, or alter a URL.`,
-    'If nothing qualifies, return an empty list rather than padding it with weaker matches.',
     '',
     'Return JSON matching the schema.',
   ].join('\n');

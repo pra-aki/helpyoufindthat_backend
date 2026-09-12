@@ -21,7 +21,7 @@ test('the search prompt asks for threads only, with no reply-writing instruction
     assert.ok(!p.includes(gone), `prompt should not contain "${gone}"`);
   }
   assert.match(p, /A partial fit still counts/);
-  assert.match(p, /return an empty list rather than padding it with weaker matches\.\n\nReturn JSON matching the schema\.$/);
+  assert.match(p, /never invent, guess, or alter a URL\.\n\nReturn JSON matching the schema\.$/);
 });
 
 test('the search schema has no suggested_reply and parsed threads carry none', async () => {

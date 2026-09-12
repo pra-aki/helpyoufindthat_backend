@@ -211,7 +211,7 @@ Each request is exactly one Perplexity chat completion, whether it covers one fo
 - `search_after_date_filter` and `search_before_date_filter` set from the requested range (Perplexity does not allow combining these with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
-The prompt is aimed at demand, not supply: it frames the product as something you sell, asks the model to first state the problem a potential customer would have in their own words, and then to find people who have that problem and are asking for a solution. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
+The prompt is aimed at demand, not supply: it asks for threads where users are looking for a recommendation, tool, service, alternative, or advice for a problem the product solves, and gives the product description as the thing to match. Launches, "Show HN" and "I built" posts, reviews, comparisons, tutorials, and general discussion are explicitly excluded. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server keeps only `seeking` threads.
 
 Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
 
@@ -219,7 +219,7 @@ The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the aut
 
 ## Adding a forum
 
-1. Create `src/forums/<name>.js` exporting `{ id, name, aliases, domains, threadHint, isThreadUrl }`. See `src/forums/reddit.js`.
+1. Create `src/forums/<name>.js` exporting `{ id, name, aliases, domains, isThreadUrl }`. See `src/forums/reddit.js`.
 2. Import it in `src/forums/index.js` and append it to the `forums` array.
 3. Add a case to `test/forums.test.js`.
 
