@@ -1,4 +1,5 @@
-import { PerplexityError } from '../errors.js';
+import { HttpError, PerplexityError } from '../errors.js';
+import { fetchPage, extractPageContent } from './pageFetch.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -265,38 +266,95 @@ const DESCRIBE_SCHEMA = {
     },
     problem: { type: 'string', description: 'One sentence: the problem a customer would have, in the words they would use when asking for help' },
     audience: { type: 'string', description: 'Who the product is for, in a few words' },
-    confidence: { type: 'number', description: '0 to 1: how well the site content supported this description' },
+    confidence: { type: 'number', description: '0 to 1: how well the available content supported this description' },
   },
   required: ['name', 'description', 'problem', 'audience', 'confidence'],
 };
 
+// Codes where retrying through search makes no sense: the address itself was refused.
+const REFUSED_ADDRESS = new Set(['EBLOCKEDADDRESS', 'EPROTOCOL', 'EPORT', 'ECREDENTIALS']);
+
 /**
- * Asks Perplexity to read a product's website and write the description the
- * search prompt needs: what it does, who it is for, and the problem it solves.
- * Nothing is fetched by this server; Perplexity reads the site.
+ * Describes the product at a website, written the way the search prompt wants it.
+ *
+ * The page is read by this server first (with private and internal addresses
+ * refused), because Perplexity's search only knows pages a search engine has
+ * indexed, and new product sites often are not. Web search is the fallback when
+ * the page cannot be read at all.
+ *
+ * @param {object} params
+ * @param {string} params.website
+ * @param {object} params.config
+ * @param {Function} [params.fetchImpl]      fetch used for Perplexity
+ * @param {Function} [params.fetchPageImpl]  page reader, injectable for tests
  */
-export async function describeWebsite({ website, config, fetchImpl = fetch }) {
+export async function describeWebsite({ website, config, fetchImpl = fetch, fetchPageImpl = fetchPage }) {
   const { model, searchContextSize } = config.perplexity;
   const hostname = new URL(website).hostname.replace(/^www\./, '');
+
+  let page = null;
+  let readError = null;
+  try {
+    const fetched = await fetchPageImpl(website);
+    page = { url: fetched.url, ...extractPageContent(fetched.html) };
+  } catch (err) {
+    if (REFUSED_ADDRESS.has(err?.code)) throw new HttpError(400, `Cannot read that website: ${err.message}`, { field: 'website', reason: err.code });
+    readError = err?.message ?? 'could not read the page';
+  }
+
+  const hasText = Boolean(page && page.textLength >= 40);
+  const hasMeta = Boolean(page && (page.title || page.description));
+  const fromPage = hasText || hasMeta;
+  const metadataOnly = fromPage && !hasText;
+
+  const warnings = [];
+  if (readError) warnings.push(`The site could not be read directly (${readError}), so this falls back to web search, which only finds pages search engines have indexed.`);
+  if (page?.clientRendered) warnings.push('The page builds its content in the browser with JavaScript, so only its title and meta description could be read. Server-side rendering or prerendering would give a fuller description.');
+  if (page?.noindex) warnings.push('The page asks search engines not to index it (a robots "noindex" tag), so search-based tools, including this one\'s fallback, cannot find it.');
+  if (page && !fromPage) warnings.push('The page had no readable text, title, or description.');
+
+  const source = fromPage
+    ? [
+        `Describe the product at ${website} using the content read from the page below.`,
+        metadataOnly
+          ? 'Only the page title and meta description were available. Keep the description short and close to what they say, and set confidence no higher than 0.5.'
+          : 'You may use web search to add detail from other pages on the same site. If search finds nothing, rely entirely on the content below.',
+        'Do not add anything the content does not support.',
+        '',
+        'Content read from the page:',
+        '"""',
+        ...[
+          page.title && `Title: ${page.title}`,
+          page.siteName && `Site name: ${page.siteName}`,
+          page.description && `Meta description: ${page.description}`,
+          page.headings.length && `Headings: ${page.headings.join(' | ')}`,
+          hasText && `Page text: ${page.text}`,
+        ].filter(Boolean),
+        '"""',
+      ]
+    : [
+        `Find and read the product website at ${website}, including its main pages such as home, product, pricing, and about.`,
+        'If it does not appear in your search results, say plainly in the description that the site could not be found, and set confidence to 0. Do not guess what the product does from its name or domain.',
+      ];
+
   const requestBody = {
     model,
     temperature: 0.1,
     messages: [
       {
         role: 'system',
-        content:
-          'You read a product website and describe the product factually for someone who has never seen it. Use only what the site says. If the site is unreachable, empty, or not a product, say so in the description and set confidence to 0.',
+        content: 'You describe a product factually for someone who has never seen it, using only the content you are given or find. You never guess what a product does from its name.',
       },
       {
         role: 'user',
         content: [
-          `Read the product website at ${website} (including its main pages such as home, product, pricing, and about).`,
+          ...source,
           '',
-          'Write a description that will be used to find people who need this product. It must say, in plain language:',
+          'Write a description that will be used to find people who need this product. In plain language it must say:',
           '1. what the product does',
           '2. who it is for',
           '3. the problem it solves for them, and what that problem looks like day to day',
-          'Two to four sentences, no marketing adjectives, no slogans, no claims the site does not make.',
+          'Two to four sentences, no marketing adjectives, no slogans, no claims the content does not make.',
           '',
           'Also give the product name, the audience in a few words, and the problem in the words a customer would use when asking for help. Return JSON matching the schema.',
         ].join('\n'),
@@ -313,18 +371,27 @@ export async function describeWebsite({ website, config, fetchImpl = fetch }) {
   if (!parsed || typeof parsed.description !== 'string' || !parsed.description.trim()) {
     throw new PerplexityError('Perplexity did not return a usable description', { status: 502 });
   }
-  const clean = (v, max) => String(v ?? '').trim().slice(0, max) || null;
+
+  const cleanText = (v, max) => String(v ?? '').trim().slice(0, max) || null;
+  let confidence = Math.min(1, Math.max(0, Number(parsed.confidence) || 0));
+  if (metadataOnly) confidence = Math.min(confidence, 0.5);
+
   return {
     website,
-    name: clean(parsed.name, 200),
-    description: clean(parsed.description, 2000),
-    problem: clean(parsed.problem, 500),
-    audience: clean(parsed.audience, 200),
-    confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0)),
+    name: cleanText(parsed.name, 200),
+    description: cleanText(parsed.description, 2000),
+    problem: cleanText(parsed.problem, 500),
+    audience: cleanText(parsed.audience, 200),
+    confidence,
+    source: fromPage ? 'page' : 'search',
+    warnings,
     meta: {
       model: data.model ?? model,
       usage: data.usage ?? null,
       sources: Array.isArray(data.search_results) ? data.search_results.map((r) => r.url).filter(Boolean).slice(0, 10) : [],
+      page: page
+        ? { url: page.url, title: page.title, textLength: page.textLength, clientRendered: page.clientRendered, noindex: page.noindex }
+        : null,
     },
   };
 }

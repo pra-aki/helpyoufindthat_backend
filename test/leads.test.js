@@ -58,27 +58,61 @@ test('remove issues a scoped DELETE and returns the deleted ids', async () => {
 
 const pplx = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 
-test('describeWebsite asks Perplexity to read the site, scoped to its domain, and returns a trimmed result', async () => {
+const unreachable = async () => { throw Object.assign(new Error('the domain does not resolve'), { code: 'ENOTFOUND' }); };
+const describeReply = (over = {}) => jsonRes({ model: 'sonar-pro', usage: { total_tokens: 1 }, search_results: [{ url: 'https://www.acme.com/' }], choices: [{ message: { content: JSON.stringify({ name: ' Acme ', description: 'Acme reminds landscapers to call leads back.', problem: 'I keep forgetting to follow up', audience: 'small crews', confidence: 0.9, ...over }) } }] });
+
+test('describeWebsite reads the page itself and gives its content to the model', async () => {
   let captured;
-  const fetchImpl = async (url, init) => {
-    captured = JSON.parse(init.body);
-    return jsonRes({ model: 'sonar-pro', usage: { total_tokens: 1 }, search_results: [{ url: 'https://www.acme.com/' }, { url: 'https://www.acme.com/pricing' }], choices: [{ message: { content: JSON.stringify({ name: ' Acme ', description: 'Acme reminds landscapers to call leads back. It is for small crews. They lose quotes because nobody follows up.', problem: 'I keep forgetting to follow up with quotes', audience: 'small landscaping businesses', confidence: 0.8 }) } }] });
-  };
-  const out = await describeWebsite({ website: 'https://www.acme.com/', config: pplx, fetchImpl });
+  const page = async (url) => ({ url, status: 200, html: '<title>Acme</title><body><h1>Call every lead back</h1><p>Acme reminds landscapers to call leads back before they go cold, from your phone, with no setup.</p></body>' });
+  const out = await describeWebsite({ website: 'https://www.acme.com/', config: pplx, fetchPageImpl: page, fetchImpl: async (u, init) => { captured = JSON.parse(init.body); return describeReply(); } });
+  const prompt = captured.messages[1].content;
+  assert.match(prompt, /using the content read from the page below/);
+  assert.match(prompt, /Title: Acme/);
+  assert.match(prompt, /Headings: Call every lead back/);
+  assert.match(prompt, /Page text: .*reminds landscapers/);
   assert.deepEqual(captured.search_domain_filter, ['acme.com']);
-  assert.match(captured.messages[1].content, /Read the product website at https:\/\/www\.acme\.com\//);
-  assert.match(captured.messages[1].content, /the problem it solves for them/);
-  assert.equal(captured.response_format.type, 'json_schema');
+  assert.equal(out.source, 'page');
+  assert.deepEqual(out.warnings, []);
   assert.equal(out.name, 'Acme');
-  assert.match(out.description, /^Acme reminds/);
-  assert.equal(out.problem, 'I keep forgetting to follow up with quotes');
-  assert.equal(out.confidence, 0.8);
-  assert.deepEqual(out.meta.sources, ['https://www.acme.com/', 'https://www.acme.com/pricing']);
+  assert.equal(out.confidence, 0.9);
+  assert.equal(out.meta.page.clientRendered, false);
+});
+
+test('describeWebsite on a client-rendered, noindexed page uses the metadata, caps confidence, and says why', async () => {
+  let captured;
+  const spa = async (url) => ({ url, status: 200, html: '<head><title>Lead Portal</title><meta name="description" content="Finds people asking for what you sell."><meta name="robots" content="noindex"><script src="/a.js"></script></head><body><div id="root"></div></body>' });
+  const out = await describeWebsite({ website: 'https://portal.example/', config: pplx, fetchPageImpl: spa, fetchImpl: async (u, init) => { captured = JSON.parse(init.body); return describeReply({ confidence: 0.95 }); } });
+  assert.match(captured.messages[1].content, /Only the page title and meta description were available/);
+  assert.match(captured.messages[1].content, /Meta description: Finds people asking for what you sell\./);
+  assert.ok(!/Page text:/.test(captured.messages[1].content));
+  assert.equal(out.source, 'page');
+  assert.equal(out.confidence, 0.5, 'a description built from metadata alone cannot claim high confidence');
+  assert.ok(out.warnings.some((w) => /builds its content in the browser/.test(w)));
+  assert.ok(out.warnings.some((w) => /noindex/.test(w)));
+});
+
+test('describeWebsite falls back to search when the page cannot be read, and tells the model not to guess', async () => {
+  let captured;
+  const out = await describeWebsite({ website: 'https://www.acme.com/', config: pplx, fetchPageImpl: unreachable, fetchImpl: async (u, init) => { captured = JSON.parse(init.body); return describeReply({ confidence: 0 }); } });
+  assert.match(captured.messages[1].content, /Find and read the product website at https:\/\/www\.acme\.com\//);
+  assert.match(captured.messages[1].content, /Do not guess what the product does from its name or domain/);
+  assert.equal(out.source, 'search');
+  assert.ok(out.warnings.some((w) => /could not be read directly \(the domain does not resolve\)/.test(w)));
+});
+
+test('describeWebsite rejects internal addresses with a 400 instead of spending a Perplexity call', async () => {
+  let called = false;
+  const refused = async () => { throw Object.assign(new Error('that address is not a public website'), { code: 'EBLOCKEDADDRESS' }); };
+  await assert.rejects(
+    describeWebsite({ website: 'http://127.0.0.1/', config: pplx, fetchPageImpl: refused, fetchImpl: async () => { called = true; return describeReply(); } }),
+    (e) => e.status === 400 && /not a public website/.test(e.message),
+  );
+  assert.equal(called, false);
 });
 
 test('describeWebsite fails with 502 when the model returns no description', async () => {
   const fetchImpl = async () => jsonRes({ choices: [{ message: { content: 'nope' } }] });
-  await assert.rejects(describeWebsite({ website: 'https://acme.com/', config: pplx, fetchImpl }), (e) => e.status === 502);
+  await assert.rejects(describeWebsite({ website: 'https://acme.com/', config: pplx, fetchPageImpl: unreachable, fetchImpl }), (e) => e.status === 502);
 });
 
 // ---------- HTTP ----------

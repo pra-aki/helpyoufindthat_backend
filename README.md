@@ -140,14 +140,24 @@ Returns `200` with the updated product. Someone else's product returns 404. Chan
 
 ### `POST /api/products/describe`
 
-Generates a product description from a website, for pre-filling the create or edit form. Perplexity reads the site (the server never fetches it), so it costs one Perplexity call and counts against the search rate limit. Nothing is saved.
+Generates a product description from a website, for pre-filling the create or edit form. Nothing is saved. It costs one Perplexity call and counts against the search rate limit.
 
 ```bash
 curl -s https://helpyoufindthat-backend.onrender.com/api/products/describe \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"website":"followup.app"}'
 ```
 
-Returns `{ website, name, description, problem, audience, confidence, meta: { model, usage, sources } }`. The description is written the way the search prompt wants it: what the product does, who it is for, and the problem it solves, in plain language. `problem` is that problem in a customer's own words, and `confidence` (0 to 1) says how well the site supported the description; a low value usually means the site is thin, gated, or unreachable.
+Returns `{ website, name, description, problem, audience, confidence, source, warnings, meta }`. The description says what the product does, who it is for, and the problem it solves, in plain language; `problem` is that problem in a customer's words.
+
+**How the site is read.** The server reads the page itself first, then gives its title, meta description, headings, and visible text to the model. Search is only a fallback, because Perplexity's search knows only pages a search engine has indexed, and new product sites often are not. `source` says which path was used (`page` or `search`).
+
+`warnings` explains a thin result in plain words. The common ones:
+
+- **The page builds its content in the browser.** Single-page apps serve an empty shell, so only the title and meta description are readable. The description stays short and `confidence` is capped at 0.5. Server-side rendering or prerendering fixes this.
+- **The page asks search engines not to index it.** A robots `noindex` tag hides the site from every search-based tool. It does not stop the direct read.
+- **The site could not be read directly.** The domain did not resolve, the site errored or timed out, or the address was not a web page. The search fallback is then used, and the model is told not to guess from the domain name.
+
+**Safety.** The reader refuses private, loopback, link-local (including the cloud metadata address), and reserved addresses, checked at connection time on every redirect hop; only `http`/`https` on ports 80 and 443; no embedded credentials; at most 3 redirects, 8 seconds, and 1.5 MB. A refused address returns `400` without calling Perplexity.
 
 ### `POST /api/products/:id/reply`
 
