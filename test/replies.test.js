@@ -21,7 +21,7 @@ test('the search prompt asks for threads only, with no reply-writing instruction
     assert.ok(!p.includes(gone), `prompt should not contain "${gone}"`);
   }
   assert.match(p, /A partial fit still counts/);
-  assert.match(p, /Only include threads whose URL appeared in your search results\.\n\nReturn JSON matching the schema\.$/);
+  assert.match(p, /return an empty list rather than padding it with weaker matches\.\n\nReturn JSON matching the schema\.$/);
 });
 
 test('the search schema has no suggested_reply and parsed threads carry none', async () => {
@@ -30,7 +30,8 @@ test('the search schema has no suggested_reply and parsed threads carry none', a
   const item = body.response_format.json_schema.schema.properties.threads.items;
   assert.ok(!('suggested_reply' in item.properties));
   assert.ok(!item.required.includes('suggested_reply'));
-  assert.ok(!body.messages[0].content.includes('draft a reply'), 'system prompt has no reply rules');
+  assert.equal(body.messages.length, 1, 'search sends a single user message');
+  assert.ok(!body.messages[0].content.includes('draft a reply'), 'no reply rules anywhere in the request');
 
   const out = parseThreadsResponse({ choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [{ title: 'A', url: 'https://www.reddit.com/r/a/comments/a1/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: 'stray draft', posted_at: '', relevance_score: 0.9 }] }) } }] }, { forums: [reddit], threads: 5 });
   assert.equal(out.length, 1);

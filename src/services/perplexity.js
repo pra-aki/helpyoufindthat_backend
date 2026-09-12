@@ -3,14 +3,6 @@ import { fetchPage, extractPageContent } from './pageFetch.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const SYSTEM_PROMPT = [
-  'You find potential customers: people posting in public forums who have a problem and are asking for help, a tool, or a recommendation.',
-  'You are looking for demand, not supply. A thread only counts if its author is seeking a solution.',
-  'Threads that present, promote, launch, review, compare, or explain solutions are not leads and must be left out, even when they are about the exact product category.',
-  'You only report real threads whose URLs appear in your search results. Never invent, guess, or alter URLs.',
-  'If you find nothing that qualifies, return an empty list rather than padding it with weaker matches.',
-].join(' ');
-
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
@@ -85,7 +77,8 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     '',
     ...hints,
     '',
-    `${ranking} Only include threads whose URL appeared in your search results.`,
+    `${ranking} Only include threads whose URL appeared in your search results, copied exactly; never invent, guess, or alter a URL.`,
+    'If nothing qualifies, return an empty list rather than padding it with weaker matches.',
     '',
     'Return JSON matching the schema.',
   ].join('\n');
@@ -482,7 +475,6 @@ export async function searchThreads({ productDescription, forums, threads, from,
     // sampling temperature, is what keeps the drafts from reading like a template.
     temperature: 0.1,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
     ],
     search_domain_filter: domains,
