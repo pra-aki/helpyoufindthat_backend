@@ -29,7 +29,7 @@ const post = (body, headers = {}) =>
   fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
 before(async () => {
-  server = createApp({ config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  server = createApp({ searchLog: { record: async () => true },  config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -86,7 +86,7 @@ test('GET /api/threads accepts query-string parameters including x and y', async
 });
 
 test('GET /api/threads accepts an explicit from/to range', async () => {
-  const fresh = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const qs = new URLSearchParams({ productId: PID, forum: 'reddit', from: '2026-01-01', to: '2026-01-31' });
   const res = await fetch(`http://127.0.0.1:${fresh.address().port}/api/threads?${qs}`, { headers: auth });
@@ -97,7 +97,7 @@ test('GET /api/threads accepts an explicit from/to range', async () => {
 });
 
 test('forum accepts a JSON array in POST and a comma list in GET', async () => {
-  const fresh = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const b = `http://127.0.0.1:${fresh.address().port}`;
   const postRes = await fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: ['reddit', 'x'] }) });
@@ -118,7 +118,7 @@ test('rate limit kicks in per user after the configured number of requests', asy
 });
 
 test('validation errors come back as 400 JSON (auth runs first, so use a fresh limiter)', async () => {
-  const fresh = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const b = `http://127.0.0.1:${fresh.address().port}`;
   const send = (body) => fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });

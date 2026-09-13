@@ -6,6 +6,7 @@ import { productsRouter } from './routes/products.js';
 import { createSupabaseRest } from './services/supabaseRest.js';
 import { createProductsService } from './services/products.js';
 import { createResultsService } from './services/results.js';
+import { createSearchLogService } from './services/searchLog.js';
 import { createSupabaseVerifier, requireUser } from './auth/supabase.js';
 import { rateLimit } from './middleware/rateLimit.js';
 
@@ -18,8 +19,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {object} [deps.results]    injectable results service (tests)
  * @param {Function} [deps.describe] injectable website describer (tests)
  * @param {Function} [deps.compose]  injectable general reply composer (tests)
+ * @param {object} [deps.searchLog]  injectable search log (tests)
  */
-export function createApp({ config, search, verify, products, results, describe, compose } = {}) {
+export function createApp({ config, search, verify, products, results, describe, compose, searchLog } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -40,9 +42,10 @@ export function createApp({ config, search, verify, products, results, describe,
   const db = createSupabaseRest(config.supabase);
   const productsService = products ?? createProductsService(db);
   const resultsService = results ?? createResultsService(db);
+  const searchLogService = searchLog ?? createSearchLogService(db);
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-  app.use('/api', threadsRouter({ config, search, products: productsService, results: resultsService, protect }));
+  app.use('/api', threadsRouter({ config, search, products: productsService, results: resultsService, searchLog: searchLogService, protect }));
   app.use('/api', productsRouter({ config, products: productsService, results: resultsService, describe, compose, protect: [authenticate], limited: protect }));
 
   app.use((_req, res) => {

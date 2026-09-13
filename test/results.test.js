@@ -93,7 +93,7 @@ const fakeResults = {
   list: async (token, productId, page) => ({ results: saved.slice(page.offset, page.offset + page.limit), total: saved.length }),
 };
 let server; let base;
-before(async () => { server = createApp({ config, verify: fakeVerify, search: fakeSearch, products: fakeProducts, results: fakeResults }).listen(0); await new Promise((r) => server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
+before(async () => { server = createApp({ searchLog: { record: async () => true },  config, verify: fakeVerify, search: fakeSearch, products: fakeProducts, results: fakeResults }).listen(0); await new Promise((r) => server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
 after(() => server.close());
 const auth = { authorization: 'Bearer good' };
 const post = (body) => fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });

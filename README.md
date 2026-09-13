@@ -217,6 +217,30 @@ Results are then filtered to URLs that are on one of the requested forums and lo
 
 The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 
+## Search log
+
+Every search that reaches Perplexity writes one row to the `search_requests` table, whether it succeeds or fails. Requests rejected before that point, such as an unknown product or invalid input, are not logged.
+
+Each row records:
+
+- **The request:** product, user, forums, requested thread count, and date range.
+- **What was sent:** the exact prompt, and the request settings (model, temperature, domain and date filters, search context size).
+- **What came back:** how many sources Perplexity's search returned and their links, how many threads the model proposed, how many were returned, and whether the raw-search fallback was used.
+- **What was discarded, and why:** every proposed thread the server dropped, with a reason of `invalid_url`, `not_on_requested_forum`, `not_a_thread`, `duplicate`, `offering`, or `over_limit`.
+- **Everything else:** the model's problem statement, token usage, duration, and for failures the error and its HTTP status.
+
+Rows are readable only by the user who owns them, and deleting a product or user deletes its rows. A scheduled database job (`pg_cron`, job `purge-search-requests-older-than-30-days`) deletes rows older than **30 days**, every day at 03:17 UTC. Writing the log never fails a search; if the write errors, it is printed to the server log instead.
+
+To see why a search came back short, in the Supabase SQL editor:
+
+```sql
+select created_at, forums, threads_requested, raw_result_count, model_thread_count, returned_count, dropped
+from search_requests
+where product_id = '<product id>'
+order by created_at desc
+limit 5;
+```
+
 ## Adding a forum
 
 1. Create `src/forums/<name>.js` exporting `{ id, name, aliases, domains, isThreadUrl }`. See `src/forums/reddit.js`.

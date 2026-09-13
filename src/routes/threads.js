@@ -12,9 +12,10 @@ const bearer = (req) => (req.get('authorization') ?? '').replace(/^Bearer\s+/i, 
  * @param {Function} [deps.search]     thread search, injectable for tests
  * @param {object} deps.products       products service; the search description comes from the product
  * @param {object} deps.results        results service; every search is stored under its product
+ * @param {object} [deps.searchLog]    search log; every search that reaches Perplexity is recorded
  * @param {Function[]} [deps.protect]  middleware applied to the search routes (auth, rate limit)
  */
-export function threadsRouter({ config, search = searchThreads, products, results, protect = [] }) {
+export function threadsRouter({ config, search = searchThreads, products, results, searchLog = { record: async () => false }, protect = [] }) {
   const router = Router();
 
   router.get('/forums', (_req, res) => {
@@ -37,8 +38,26 @@ export function threadsRouter({ config, search = searchThreads, products, result
     const override = source.productDescription ?? source.product_description ?? source.description;
     const params = parseSearchRequest({ ...source, productDescription: override || product.description }, config);
 
+    const logEntry = {
+      productId,
+      userId: req.user?.id,
+      forums: params.forums.map((f) => f.id),
+      threadsRequested: params.threads,
+      from: isoDay(params.from),
+      to: isoDay(params.to),
+    };
+
     const searchDate = new Date();
-    const found = await search({ ...params, config, user: req.user });
+    let found;
+    try {
+      found = await search({ ...params, config, user: req.user });
+    } catch (err) {
+      await searchLog.record(token, { ...logEntry, status: 'error', error: err?.message, errorStatus: err?.status, diagnostics: err?.diagnostics });
+      throw err;
+    }
+    // Logged before the results are saved, so the search stays on record even if saving fails.
+    await searchLog.record(token, { ...logEntry, status: 'ok', returnedCount: found.threads.length, diagnostics: found.diagnostics });
+
     const stored = await results.save(token, productId, found.threads, { searchDate });
     const idByLink = new Map(stored.map((r) => [r.link, r.id]));
     const threads = found.threads.map((t) => ({ id: idByLink.get(t.url) ?? null, ...t }));

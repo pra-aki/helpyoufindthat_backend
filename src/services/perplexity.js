@@ -108,16 +108,18 @@ const parseContentJson = (content, { requireThreads = true } = {}) => {
   return null;
 };
 
-/**
- * Turns a Perplexity chat completion into a ranked, filtered list of threads
- * across the requested forums. Exported for testing.
- */
+/** The model's one-sentence statement of the customer's problem, or null. */
 export const problemStatementFrom = (data) => {
   const parsed = parseContentJson(data?.choices?.[0]?.message?.content);
   return typeof parsed?.problem === 'string' && parsed.problem.trim() ? parsed.problem.trim() : null;
 };
 
-export function parseThreadsResponse(data, { forums, threads }) {
+/**
+ * Turns a Perplexity chat completion into ranked, filtered threads across the
+ * requested forums, and records why each other proposed thread was discarded,
+ * so the search log can explain a short result. Exported for testing.
+ */
+export function analyzeThreadsResponse(data, { forums, threads }) {
   const searchResults = Array.isArray(data?.search_results) ? data.search_results : [];
   const byUrl = new Map();
   for (const r of searchResults) {
@@ -128,8 +130,7 @@ export function parseThreadsResponse(data, { forums, threads }) {
     }
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  const parsed = parseContentJson(content);
+  const parsed = parseContentJson(data?.choices?.[0]?.message?.content);
 
   // Prefer the model's ranked list; fall back to raw search results if it returned nothing usable.
   const candidates = parsed
@@ -137,49 +138,73 @@ export function parseThreadsResponse(data, { forums, threads }) {
     : searchResults.map((r) => ({
         title: r.title,
         url: r.url,
-        summary: r.snippet ?? '',
+        summary: r.snippet ?? "",
         why_relevant: 'Returned by search for the product description',
-        posted_at: r.date ?? '',
+        posted_at: r.date ?? "",
         relevance_score: 0.5,
       }));
 
+  const dropped = [];
+  const drop = (item, reason) => dropped.push({ url: String(item?.url ?? "").slice(0, 500), reason });
   const seen = new Set();
   const results = [];
   for (const item of candidates) {
     let url;
     try {
-      url = new URL(String(item?.url ?? ''));
+      url = new URL(String(item?.url ?? ""));
     } catch {
+      drop(item, 'invalid_url');
       continue;
     }
-    if (!/^https?:$/.test(url.protocol)) continue;
+    if (!/^https?:$/.test(url.protocol)) {
+      drop(item, 'invalid_url');
+      continue;
+    }
     const forum = forumForUrl(url, forums);
-    if (!forum) continue;
-    if (typeof forum.isThreadUrl === 'function' && !forum.isThreadUrl(url)) continue;
+    if (!forum) {
+      drop(item, 'not_on_requested_forum');
+      continue;
+    }
+    if (typeof forum.isThreadUrl === 'function' && !forum.isThreadUrl(url)) {
+      drop(item, 'not_a_thread');
+      continue;
+    }
 
     const key = dedupeKey(url);
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      drop(item, 'duplicate');
+      continue;
+    }
     seen.add(key);
 
-    // The model labels each thread's intent; anything that isn't someone seeking a solution is not a lead.
     // Promotions are never leads. Everything else is kept and ranked by its score, so weak matches fill the count.
-    if (item.intent === 'offering') continue;
+    if (item.intent === 'offering') {
+      drop(item, 'offering');
+      continue;
+    }
 
     const fromSearch = byUrl.get(key);
     results.push({
-      title: String(item.title ?? fromSearch?.title ?? '').trim(),
+      title: String(item.title ?? fromSearch?.title ?? "").trim(),
       url: url.href,
-      asksFor: String(item.asks_for ?? '').trim() || null,
-      summary: String(item.summary ?? '').trim(),
-      whyRelevant: String(item.why_relevant ?? '').trim(),
-      postedAt: String(item.posted_at || fromSearch?.date || '').trim() || null,
+      asksFor: String(item.asks_for ?? "").trim() || null,
+      summary: String(item.summary ?? "").trim(),
+      whyRelevant: String(item.why_relevant ?? "").trim(),
+      postedAt: String(item.posted_at || fromSearch?.date || "").trim() || null,
       relevanceScore: clampScore(item.relevance_score),
       source: forum.id,
     });
   }
 
   results.sort((a, b) => b.relevanceScore - a.relevanceScore);
-  return results.slice(0, threads);
+  for (const extra of results.slice(threads)) dropped.push({ url: extra.url, reason: 'over_limit' });
+
+  return { threads: results.slice(0, threads), dropped, modelThreadCount: candidates.length, usedFallback: !parsed };
+}
+
+/** The kept threads only. Exported for testing. */
+export function parseThreadsResponse(data, options) {
+  return analyzeThreadsResponse(data, options).threads;
 }
 
 /** Sends one chat completion to Perplexity and returns the parsed JSON body, mapping failures to HTTP errors. */
@@ -462,14 +487,12 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
 export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
   const { model, searchContextSize } = config.perplexity;
   const domains = [...new Set(forums.flatMap((f) => f.domains))];
+  const prompt = buildUserPrompt({ productDescription, forums, threads, from, to });
   const requestBody = {
     model,
-    // Extraction and ranking need to be repeatable, so this stays low; the reply prompt, not the
-    // sampling temperature, is what keeps the drafts from reading like a template.
+    // Extraction and ranking need to be repeatable, so sampling stays low.
     temperature: 0.1,
-    messages: [
-      { role: 'user', content: buildUserPrompt({ productDescription, forums, threads, from, to }) },
-    ],
+    messages: [{ role: 'user', content: prompt }],
     search_domain_filter: domains,
     // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.
     // The "before" filter is exclusive, so the day after "to" makes the range inclusive.
@@ -479,20 +502,48 @@ export async function searchThreads({ productDescription, forums, threads, from,
     return_related_questions: false,
     response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
   };
+  // The log keeps every setting except the prompt, which it stores on its own, and the fixed output schema.
+  // eslint-disable-next-line no-unused-vars
+  const { messages, response_format, ...settings } = requestBody;
 
-  const data = await callPerplexity(requestBody, config, fetchImpl);
+  const startedAt = Date.now();
+  let data;
+  try {
+    data = await callPerplexity(requestBody, config, fetchImpl);
+  } catch (err) {
+    if (err && typeof err === 'object') err.diagnostics = { prompt, settings, durationMs: Date.now() - startedAt };
+    throw err;
+  }
+  const durationMs = Date.now() - startedAt;
+
+  const analysis = analyzeThreadsResponse(data, { forums, threads });
+  const searchResults = Array.isArray(data.search_results) ? data.search_results : [];
+  const problem = problemStatementFrom(data);
 
   return {
-    threads: parseThreadsResponse(data, { forums, threads }),
+    threads: analysis.threads,
     meta: {
       model: data.model ?? model,
-      problem: problemStatementFrom(data),
+      problem,
       searchedForums: forums.map((f) => f.id),
       searchedDomains: domains,
       from: isoDay(from),
       to: isoDay(to),
       usage: data.usage ?? null,
-      rawResultCount: Array.isArray(data.search_results) ? data.search_results.length : 0,
+      rawResultCount: searchResults.length,
+    },
+    // For the search log only; the route never sends this to the caller.
+    diagnostics: {
+      prompt,
+      settings,
+      durationMs,
+      rawResultCount: searchResults.length,
+      searchResultUrls: searchResults.map((r) => r?.url).filter(Boolean),
+      modelThreadCount: analysis.modelThreadCount,
+      usedFallback: analysis.usedFallback,
+      dropped: analysis.dropped,
+      problem,
+      usage: data.usage ?? null,
     },
   };
 }
