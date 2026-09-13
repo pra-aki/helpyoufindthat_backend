@@ -229,7 +229,7 @@ Each row records:
 - **What was discarded, and why:** every proposed thread the server dropped, with a reason of `invalid_url`, `not_on_requested_forum`, `not_a_thread`, `duplicate`, `offering`, or `over_limit`.
 - **Everything else:** the model's problem statement, token usage, duration, and for failures the error and its HTTP status.
 
-Rows are readable only by the user who owns them, and deleting a product or user deletes its rows. A scheduled database job (`pg_cron`, job `purge-search-requests-older-than-30-days`) deletes rows older than **30 days**, every day at 03:17 UTC. Writing the log never fails a search; if the write errors, it is printed to the server log instead.
+Rows are readable only by the user who owns them, and deleting a product or user deletes its rows. A scheduled database job (`pg_cron`, job `purge-search-requests-older-than-30-days`) deletes rows older than **30 days**, every Sunday at 03:17 UTC, so a row can remain for up to about 37 days. Writing the log never fails a search; if the write errors, it is printed to the server log instead.
 
 To see why a search came back short, in the Supabase SQL editor:
 
