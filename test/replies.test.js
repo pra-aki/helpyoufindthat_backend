@@ -33,7 +33,7 @@ test('the search schema has no suggested_reply and parsed threads carry none', a
   assert.equal(body.messages.length, 1, 'search sends a single user message');
   assert.ok(!body.messages[0].content.includes('draft a reply'), 'no reply rules anywhere in the request');
 
-  const out = parseThreadsResponse({ choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [{ title: 'A', url: 'https://www.reddit.com/r/a/comments/a1/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: 'stray draft', posted_at: '', relevance_score: 0.9 }] }) } }] }, { forums: [reddit], threads: 5 });
+  const out = parseThreadsResponse({ citations: ['https://www.reddit.com/r/a/comments/a1/x/'], choices: [{ message: { content: JSON.stringify({ problem: 'p', threads: [{ title: 'A', url: 'https://www.reddit.com/r/a/comments/a1/x/', intent: 'seeking', asks_for: 'a tool', summary: 's', why_relevant: 'w', suggested_reply: 'stray draft', posted_at: '', relevance_score: 0.9 }] }) } }] }, { forums: [reddit], threads: 5 });
   assert.equal(out.length, 1);
   assert.ok(!('suggestedReply' in out[0]), 'a stray draft from the model is ignored');
 });

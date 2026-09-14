@@ -204,18 +204,20 @@ The backend talks to Supabase's REST endpoint with the caller's own token, so no
 
 ## How search works
 
-Each request is exactly one Perplexity chat completion, whether it covers one forum or all of them, with:
+Each request makes one Perplexity chat completion per requested forum, all at the same time, and ranks the threads from all of them together by score. A single call over several sites lets one site take nearly every retrieved source, so the other sites' best threads are never seen. Searching all six forums therefore costs six Perplexity calls, and takes about as long as the slowest one. Each call has:
 
-- `search_domain_filter` restricted to the requested forums' domains
-- `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, useful for multi-forum searches, at a higher cost)
+- `search_domain_filter` restricted to that forum's domains
+- `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, at a higher cost)
 - `search_after_date_filter` and `search_before_date_filter` set from the requested range (Perplexity does not allow combining these with `search_recency_filter`)
 - a JSON-schema `response_format` asking for ranked threads with a relevance score
 
 The prompt is aimed at demand, not supply: it asks for threads where users are looking for a recommendation, tool, service, alternative, or advice for a problem the product solves, and gives the product description as the thing to match. Launches, "Show HN" and "I built" posts, reviews, comparisons, and tutorials are never included, at any score. The model labels every thread's `intent` as `seeking`, `offering`, or `discussion`, and the server drops `offering` threads. General discussion and loose fits are kept with a relevance score of 0.3 or lower, so a search returns the number of threads requested whenever the search results contain that many; use `minScore` on the results endpoint to hide them.
 
+**Every thread must come from Perplexity's own sources.** A thread is kept only if its link matches one of the search results or citations Perplexity returned for that call. Links are compared by post rather than exact text, so the same X, Reddit, or Hacker News post written two ways still matches. This rejects links the model invents, which it does when a search finds too little and the prompt asks for a full count; such a search now returns fewer threads rather than fake ones. If one forum's call fails, the others still return, and the response's `meta.failedForums` lists the failure.
+
 Results are then filtered to URLs that are on one of the requested forums and look like a thread there (not an index or profile page), tagged with that forum as `source`, deduplicated, sorted by relevance, and cut to `threads`. Each thread carries `asksFor`, a few words on what the author wants, and the response's `meta.problem` shows the problem statement the model searched for, which is a quick way to check whether the product description is being understood.
 
-The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. When one call spans several forums, larger sites tend to contribute more sources; use per-forum calls when you want depth on a specific site. If the model returns unusable JSON the raw `search_results` are used as a fallback.
+The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the author is seeking something like the product: 1 means explicitly asking for a tool that does what the product does, around 0.5 means describing the problem and wanting advice. It's a useful sort key, not a calibrated probability, and Perplexity's search layer exposes no score of its own. If the model returns unusable JSON the raw `search_results` are used as a fallback.
 
 ## Search log
 
@@ -225,8 +227,8 @@ Each row records:
 
 - **The request:** product, user, forums, requested thread count, and date range.
 - **What was sent:** the exact prompt, and the request settings (model, temperature, domain and date filters, search context size).
-- **What came back:** how many sources Perplexity's search returned and their links, how many threads the model proposed, how many were returned, and whether the raw-search fallback was used.
-- **What was discarded, and why:** every proposed thread the server dropped, with a reason of `invalid_url`, `not_on_requested_forum`, `not_a_thread`, `duplicate`, `offering`, or `over_limit`.
+- **What came back:** how many sources Perplexity's search returned and their links, the citation links, a breakdown of each forum's call, how many threads the model proposed, how many were returned, and whether the raw-search fallback was used.
+- **What was discarded, and why:** every proposed thread the server dropped, with a reason of `invalid_url`, `not_in_sources`, `not_on_requested_forum`, `not_a_thread`, `duplicate`, `offering`, or `over_limit`.
 - **Everything else:** the model's problem statement, token usage, duration, and for failures the error and its HTTP status.
 
 Rows are readable only by the user who owns them, and deleting a product or user deletes its rows. A scheduled database job (`pg_cron`, job `purge-search-requests-older-than-30-days`) deletes rows older than **30 days**, every Sunday at 03:17 UTC, so a row can remain for up to about 37 days. Writing the log never fails a search; if the write errors, it is printed to the server log instead.

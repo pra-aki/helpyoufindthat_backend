@@ -9,9 +9,12 @@ const reddit = getForum('reddit');
 const hn = getForum('hackernews');
 const x = getForum('x');
 
-const completion = (threads, searchResults = []) => ({
+// By default every proposed thread was cited by Perplexity, so tests of other rules are unaffected by the
+// grounding check; test/grounding.test.js covers threads that were not.
+const completion = (threads, searchResults = [], citations = threads.map((t) => t.url)) => ({
   model: 'sonar-pro',
   usage: { total_tokens: 10 },
+  citations,
   search_results: searchResults,
   choices: [{ message: { content: JSON.stringify({ threads }) } }],
 });
@@ -55,25 +58,27 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.ok(!captured.init.body.includes('test-key'), 'API key must not leak into the request body');
 });
 
-test('multi-forum search sends the union of domains in one call and tags each thread with its source', async () => {
-  let captured;
+test('a multi-forum search sends one call per forum and tags each thread with its source', async () => {
+  const bodies = [];
+  const byDomain = {
+    'reddit.com': completion([
+      { title: 'Reddit', url: 'https://www.reddit.com/r/a/comments/abc123/t/', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.9 },
+      { title: 'Quora (not requested)', url: 'https://www.quora.com/Some-question', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 1 },
+    ]),
+    'news.ycombinator.com': completion([{ title: 'HN', url: 'https://news.ycombinator.com/item?id=41', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.7 }]),
+    'x.com': completion([{ title: 'X', url: 'https://x.com/u/status/123', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.8 }]),
+  };
   const fetchImpl = async (url, init) => {
-    captured = JSON.parse(init.body);
-    return jsonResponse(
-      completion([
-        { title: 'HN', url: 'https://news.ycombinator.com/item?id=41', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.7 },
-        { title: 'Reddit', url: 'https://www.reddit.com/r/a/comments/abc123/t/', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.9 },
-        { title: 'X', url: 'https://x.com/u/status/123', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.8 },
-        { title: 'Quora (not requested)', url: 'https://www.quora.com/Some-question', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 1 },
-      ]),
-    );
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    return jsonResponse(byDomain[body.search_domain_filter[0]]);
   };
   const day = new Date('2026-09-04T00:00:00Z');
   const { threads, meta } = await searchThreads({ productDescription: 'd', forums: [reddit, hn, x], threads: 10, from: day, to: day, config, fetchImpl });
-  assert.deepEqual(captured.search_domain_filter, ['reddit.com', 'news.ycombinator.com', 'x.com', 'twitter.com']);
-  assert.match(captured.messages[0].content, /in user forums on Reddit, Hacker News and X \(Twitter\) posted between/);
-  assert.match(captured.messages[0].content, /do not favour one site over another/);
-  assert.ok(!captured.messages[0].content.includes('What counts as a thread'), 'no per-site thread hints');
+  assert.equal(bodies.length, 3);
+  assert.deepEqual(bodies.map((b) => b.search_domain_filter), [['reddit.com'], ['news.ycombinator.com'], ['x.com', 'twitter.com']]);
+  assert.match(bodies[0].messages[0].content, /in user forums on Reddit posted between/);
+  assert.ok(bodies.every((b) => !b.messages[0].content.includes('What counts as a thread')), 'no per-site thread hints');
   assert.deepEqual(threads.map((t) => [t.title, t.source]), [['Reddit', 'reddit'], ['X', 'x'], ['HN', 'hackernews']]);
   assert.deepEqual(meta.searchedForums, ['reddit', 'hackernews', 'x']);
   assert.deepEqual([meta.from, meta.to], ['2026-09-04', '2026-09-04']);
@@ -117,6 +122,7 @@ test('falls back to search_results when the model content is not JSON', () => {
 
 test('parses JSON wrapped in a code fence', () => {
   const data = {
+    citations: ['https://reddit.com/r/a/comments/eee555/t'],
     choices: [{ message: { content: '```json\n{"threads":[{"title":"T","url":"https://reddit.com/r/a/comments/eee555/t","summary":"","why_relevant":"","posted_at":"","relevance_score":0.7}]}\n```' } }],
   };
   assert.equal(parseThreadsResponse(data, { forums: [reddit], threads: 5 }).length, 1);

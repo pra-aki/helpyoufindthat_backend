@@ -81,7 +81,42 @@ const hostMatches = (hostname, domains) => domains.some((d) => hostname === d ||
 /** Which of the given forums a URL belongs to, or null. */
 export const forumForUrl = (url, forums) => forums.find((f) => hostMatches(url.hostname, f.domains)) ?? null;
 
-const dedupeKey = (url) => `${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}`.toLowerCase();
+// Tracking and share parameters that do not change which post a link points to.
+const IGNORED_PARAMS = /^(utm_.*|ref|ref_src|ref_url|s|t|si|share|share_id|fbclid|igshid|context)$/i;
+
+/**
+ * A key that is identical for every way of writing a link to the same post, so a
+ * thread matches its source even when the model writes the link differently: with
+ * or without www or a trailing slash, twitter.com for x.com, a username or "i" in
+ * an X status link, a different Reddit slug, or tracking parameters. Exported for testing.
+ */
+export const canonicalKey = (url) => {
+  const host = url.hostname.toLowerCase().replace(/^(www|m|old|mobile|np)\./, "").replace(/^twitter\.com$/, 'x.com');
+  const path = url.pathname.replace(/\/+$/, "");
+  if (host === 'x.com') {
+    const m = path.match(/\/status\/(\d+)/);
+    if (m) return `x:${m[1]}`;
+  }
+  if (host === 'reddit.com') {
+    const m = path.match(/\/comments\/([a-z0-9]+)/i);
+    if (m) return `reddit:${m[1].toLowerCase()}`;
+  }
+  if (host === 'news.ycombinator.com') {
+    const id = url.searchParams.get('id');
+    if (id) return `hn:${id}`;
+  }
+  const params = [...url.searchParams].filter(([k]) => !IGNORED_PARAMS.test(k)).sort(([a], [b]) => a.localeCompare(b));
+  return `${host}${path}${params.length ? `?${new URLSearchParams(params)}` : ""}`.toLowerCase();
+};
+
+const keyOf = (raw) => {
+  try {
+    const url = new URL(String(raw ?? ""));
+    return /^https?:$/.test(url.protocol) ? canonicalKey(url) : null;
+  } catch {
+    return null;
+  }
+};
 
 const clampScore = (value) => {
   const n = Number(value);
@@ -115,19 +150,27 @@ export const problemStatementFrom = (data) => {
 };
 
 /**
- * Turns a Perplexity chat completion into ranked, filtered threads across the
- * requested forums, and records why each other proposed thread was discarded,
- * so the search log can explain a short result. Exported for testing.
+ * Turns one Perplexity chat completion into ranked, filtered threads for the given
+ * forums, and records why each other proposed thread was discarded, so the search
+ * log can explain a short result. A thread is kept only if its link matches one of
+ * the sources or citations Perplexity returned, which stops invented links from
+ * reaching the results. Exported for testing.
  */
 export function analyzeThreadsResponse(data, { forums, threads }) {
   const searchResults = Array.isArray(data?.search_results) ? data.search_results : [];
-  const byUrl = new Map();
+  const citations = Array.isArray(data?.citations) ? data.citations : [];
+
+  const allowed = new Set();
+  const sourceByKey = new Map();
   for (const r of searchResults) {
-    try {
-      byUrl.set(dedupeKey(new URL(r.url)), r);
-    } catch {
-      // ignore malformed search result URLs
-    }
+    const key = keyOf(r?.url);
+    if (!key) continue;
+    allowed.add(key);
+    if (!sourceByKey.has(key)) sourceByKey.set(key, r);
+  }
+  for (const c of citations) {
+    const key = keyOf(typeof c === 'string' ? c : c?.url);
+    if (key) allowed.add(key);
   }
 
   const parsed = parseContentJson(data?.choices?.[0]?.message?.content);
@@ -160,6 +203,11 @@ export function analyzeThreadsResponse(data, { forums, threads }) {
       drop(item, 'invalid_url');
       continue;
     }
+    const key = canonicalKey(url);
+    if (!allowed.has(key)) {
+      drop(item, 'not_in_sources');
+      continue;
+    }
     const forum = forumForUrl(url, forums);
     if (!forum) {
       drop(item, 'not_on_requested_forum');
@@ -169,8 +217,6 @@ export function analyzeThreadsResponse(data, { forums, threads }) {
       drop(item, 'not_a_thread');
       continue;
     }
-
-    const key = dedupeKey(url);
     if (seen.has(key)) {
       drop(item, 'duplicate');
       continue;
@@ -183,7 +229,7 @@ export function analyzeThreadsResponse(data, { forums, threads }) {
       continue;
     }
 
-    const fromSearch = byUrl.get(key);
+    const fromSearch = sourceByKey.get(key);
     results.push({
       title: String(item.title ?? fromSearch?.title ?? "").trim(),
       url: url.href,
@@ -471,8 +517,26 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
   };
 }
 
+/** Adds up numeric usage fields, such as tokens and cost, across calls. */
+const sumUsage = (usages) => {
+  const present = usages.filter((u) => u && typeof u === 'object' && !Array.isArray(u));
+  if (present.length <= 1) return present[0] ?? null;
+  const add = (into, from) => {
+    for (const [k, v] of Object.entries(from)) {
+      if (typeof v === 'number') into[k] = (typeof into[k] === 'number' ? into[k] : 0) + v;
+      else if (v && typeof v === 'object' && !Array.isArray(v)) into[k] = add(into[k] && typeof into[k] === 'object' ? into[k] : {}, v);
+      else if (!(k in into)) into[k] = v;
+    }
+    return into;
+  };
+  return present.reduce((acc, u) => add(acc, u), {});
+};
+
+const urlsOf = (list) =>
+  Array.isArray(list) ? list.map((r) => (typeof r === 'string' ? r : r?.url)).filter((u) => typeof u === 'string' && u) : [];
+
 /**
- * Searches one or more forums through Perplexity's Sonar API in a single call.
+ * Searches one or more forums through Perplexity's Sonar API, one call per forum, in parallel.
  *
  * @param {object} params
  * @param {string} params.productDescription
@@ -486,64 +550,116 @@ export async function composeGeneralReply({ product, config, fetchImpl = fetch }
  */
 export async function searchThreads({ productDescription, forums, threads, from, to, config, fetchImpl = fetch }) {
   const { model, searchContextSize } = config.perplexity;
-  const domains = [...new Set(forums.flatMap((f) => f.domains))];
-  const prompt = buildUserPrompt({ productDescription, forums, threads, from, to });
-  const requestBody = {
+  const common = {
     model,
     // Extraction and ranking need to be repeatable, so sampling stays low.
     temperature: 0.1,
-    messages: [{ role: 'user', content: prompt }],
-    search_domain_filter: domains,
     // Perplexity rejects search_recency_filter combined with date filters, so only the exact dates are sent.
     // The "before" filter is exclusive, so the day after "to" makes the range inclusive.
     search_after_date_filter: formatPerplexityDate(from),
     search_before_date_filter: formatPerplexityDate(new Date(to.getTime() + DAY_MS)),
     web_search_options: { search_context_size: searchContextSize },
     return_related_questions: false,
-    response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
   };
-  // The log keeps every setting except the prompt, which it stores on its own, and the fixed output schema.
-  // eslint-disable-next-line no-unused-vars
-  const { messages, response_format, ...settings } = requestBody;
 
+  // One call per forum, all at once. A single call over several sites lets one site take nearly every
+  // retrieved source, so the other sites' best threads are never seen. Each call asks for the full count
+  // so a strong forum can supply most of the final list; the merge below keeps the best overall.
   const startedAt = Date.now();
-  let data;
-  try {
-    data = await callPerplexity(requestBody, config, fetchImpl);
-  } catch (err) {
-    if (err && typeof err === 'object') err.diagnostics = { prompt, settings, durationMs: Date.now() - startedAt };
-    throw err;
-  }
+  const calls = await Promise.all(
+    forums.map(async (forum) => {
+      const prompt = buildUserPrompt({ productDescription, forums: [forum], threads, from, to });
+      const requestBody = {
+        ...common,
+        messages: [{ role: 'user', content: prompt }],
+        search_domain_filter: forum.domains,
+        response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
+      };
+      const callStart = Date.now();
+      try {
+        const data = await callPerplexity(requestBody, config, fetchImpl);
+        return { forum, prompt, ok: true, data, durationMs: Date.now() - callStart, analysis: analyzeThreadsResponse(data, { forums: [forum], threads }) };
+      } catch (error) {
+        return { forum, prompt, ok: false, error, durationMs: Date.now() - callStart };
+      }
+    }),
+  );
   const durationMs = Date.now() - startedAt;
 
-  const analysis = analyzeThreadsResponse(data, { forums, threads });
-  const searchResults = Array.isArray(data.search_results) ? data.search_results : [];
-  const problem = problemStatementFrom(data);
+  const prompt = calls.length === 1 ? calls[0].prompt : calls.map((c) => `=== ${c.forum.id} ===\n${c.prompt}`).join('\n\n');
+  const settings = { ...common, search_domain_filter_by_forum: Object.fromEntries(forums.map((f) => [f.id, f.domains])) };
+  const callSummaries = calls.map((c) =>
+    c.ok
+      ? {
+          forum: c.forum.id,
+          ok: true,
+          durationMs: c.durationMs,
+          rawResultCount: Array.isArray(c.data.search_results) ? c.data.search_results.length : 0,
+          citationCount: urlsOf(c.data.citations).length,
+          modelThreadCount: c.analysis.modelThreadCount,
+          keptCount: c.analysis.threads.length,
+          usedFallback: c.analysis.usedFallback,
+          usage: c.data.usage ?? null,
+        }
+      : { forum: c.forum.id, ok: false, durationMs: c.durationMs, error: c.error?.message ?? String(c.error), status: c.error?.status ?? null },
+  );
+
+  const succeeded = calls.filter((c) => c.ok);
+  if (succeeded.length === 0) {
+    const error = calls[0].error;
+    if (error && typeof error === 'object') error.diagnostics = { prompt, settings, durationMs, calls: callSummaries };
+    throw error;
+  }
+
+  const dropped = [];
+  const merged = [];
+  const seen = new Set();
+  for (const c of succeeded) {
+    for (const d of c.analysis.dropped) dropped.push({ ...d, forum: c.forum.id });
+    for (const t of c.analysis.threads) {
+      const key = canonicalKey(new URL(t.url));
+      if (seen.has(key)) {
+        dropped.push({ url: t.url, reason: 'duplicate', forum: c.forum.id });
+        continue;
+      }
+      seen.add(key);
+      merged.push(t);
+    }
+  }
+  merged.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  for (const extra of merged.slice(threads)) dropped.push({ url: extra.url, reason: 'over_limit', forum: extra.source });
+
+  const rawResultCount = succeeded.reduce((n, c) => n + (Array.isArray(c.data.search_results) ? c.data.search_results.length : 0), 0);
+  const usage = sumUsage(succeeded.map((c) => c.data.usage));
+  const problem = succeeded.map((c) => problemStatementFrom(c.data)).find(Boolean) ?? null;
 
   return {
-    threads: analysis.threads,
+    threads: merged.slice(0, threads),
     meta: {
-      model: data.model ?? model,
+      model: succeeded[0].data.model ?? model,
       problem,
       searchedForums: forums.map((f) => f.id),
-      searchedDomains: domains,
+      searchedDomains: [...new Set(forums.flatMap((f) => f.domains))],
       from: isoDay(from),
       to: isoDay(to),
-      usage: data.usage ?? null,
-      rawResultCount: searchResults.length,
+      usage,
+      rawResultCount,
+      failedForums: callSummaries.filter((c) => !c.ok).map(({ forum, error, status }) => ({ forum, error, status })),
     },
     // For the search log only; the route never sends this to the caller.
     diagnostics: {
       prompt,
       settings,
       durationMs,
-      rawResultCount: searchResults.length,
-      searchResultUrls: searchResults.map((r) => r?.url).filter(Boolean),
-      modelThreadCount: analysis.modelThreadCount,
-      usedFallback: analysis.usedFallback,
-      dropped: analysis.dropped,
+      rawResultCount,
+      searchResultUrls: succeeded.flatMap((c) => urlsOf(c.data.search_results)),
+      citationUrls: succeeded.flatMap((c) => urlsOf(c.data.citations)),
+      modelThreadCount: succeeded.reduce((n, c) => n + c.analysis.modelThreadCount, 0),
+      usedFallback: succeeded.some((c) => c.analysis.usedFallback),
+      dropped,
       problem,
-      usage: data.usage ?? null,
+      usage,
+      calls: callSummaries,
     },
   };
 }

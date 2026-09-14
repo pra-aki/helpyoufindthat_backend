@@ -18,6 +18,10 @@ const completion = (threads, searchResults = []) => ({ model: 'sonar-pro', usage
 // ---------- drop reasons ----------
 
 test('analyzeThreadsResponse gives a reason for every proposed thread it discards', () => {
+  const inSources = [
+    'https://www.reddit.com/r/a/comments/k1/keep/', 'https://www.reddit.com/r/a/comments/k2/keep2/', 'https://www.reddit.com/r/a/comments/k3/over/',
+    'https://www.reddit.com/r/smallbusiness/', 'https://www.quora.com/Some-question', 'https://www.reddit.com/r/a/comments/k4/launch/',
+  ];
   const data = completion([
     t({ url: 'https://www.reddit.com/r/a/comments/k1/keep/', relevance_score: 0.9 }),
     t({ url: 'https://www.reddit.com/r/a/comments/k2/keep2/', relevance_score: 0.8 }),
@@ -26,18 +30,20 @@ test('analyzeThreadsResponse gives a reason for every proposed thread it discard
     t({ url: 'https://www.reddit.com/r/smallbusiness/', relevance_score: 1 }),
     t({ url: 'https://www.quora.com/Some-question', relevance_score: 1 }),
     t({ url: 'https://www.reddit.com/r/a/comments/k4/launch/', intent: 'offering', relevance_score: 1 }),
+    t({ url: 'https://www.reddit.com/r/a/comments/zz9/invented/', relevance_score: 1 }),
     t({ url: 'not a url' }),
     t({ url: 'ftp://reddit.com/r/a/comments/k5/x/' }),
-  ]);
+  ], inSources.map((url) => ({ url })));
   const out = analyzeThreadsResponse(data, { forums: [reddit, hn], threads: 2 });
   assert.deepEqual(out.threads.map((x) => x.url), ['https://www.reddit.com/r/a/comments/k1/keep/', 'https://www.reddit.com/r/a/comments/k2/keep2/']);
-  assert.equal(out.modelThreadCount, 9);
+  assert.equal(out.modelThreadCount, 10);
   assert.equal(out.usedFallback, false);
   assert.deepEqual(Object.fromEntries(out.dropped.map((d) => [d.url, d.reason])), {
     'https://www.reddit.com/r/a/comments/k1/keep': 'duplicate',
     'https://www.reddit.com/r/smallbusiness/': 'not_a_thread',
     'https://www.quora.com/Some-question': 'not_on_requested_forum',
     'https://www.reddit.com/r/a/comments/k4/launch/': 'offering',
+    'https://www.reddit.com/r/a/comments/zz9/invented/': 'not_in_sources',
     'not a url': 'invalid_url',
     'ftp://reddit.com/r/a/comments/k5/x/': 'invalid_url',
     'https://www.reddit.com/r/a/comments/k3/over/': 'over_limit',
@@ -64,13 +70,14 @@ test('searchThreads returns diagnostics: the exact prompt, settings, search resu
   const d = out.diagnostics;
   assert.equal(d.prompt, sent.messages[0].content, 'the logged prompt is exactly what was sent');
   assert.ok(!('messages' in d.settings) && !('response_format' in d.settings));
-  assert.deepEqual(d.settings.search_domain_filter, ['reddit.com']);
+  assert.deepEqual(d.settings.search_domain_filter_by_forum, { reddit: ['reddit.com'] });
   assert.equal(d.settings.search_after_date_filter, '09/01/2026');
   assert.equal(d.settings.model, 'sonar-pro');
   assert.deepEqual(d.searchResultUrls, ['https://www.reddit.com/r/a/comments/k1/x/', 'https://www.reddit.com/r/smallbusiness/']);
   assert.equal(d.rawResultCount, 3);
   assert.equal(d.modelThreadCount, 2);
-  assert.deepEqual(d.dropped, [{ url: 'https://www.reddit.com/r/smallbusiness/', reason: 'not_a_thread' }]);
+  assert.deepEqual(d.dropped, [{ url: 'https://www.reddit.com/r/smallbusiness/', reason: 'not_a_thread', forum: 'reddit' }]);
+  assert.deepEqual(d.calls.map((c) => [c.forum, c.ok, c.keptCount]), [['reddit', true, 1]]);
   assert.equal(d.problem, 'I cannot find customers');
   assert.deepEqual(d.usage, { total_tokens: 42 });
   assert.ok(Number.isInteger(d.durationMs) && d.durationMs >= 0);

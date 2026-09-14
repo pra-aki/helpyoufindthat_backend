@@ -26,6 +26,8 @@ export function toSearchRequestRow(entry) {
     settings: d.settings ?? null,
     raw_result_count: int(d.rawResultCount),
     search_result_urls: Array.isArray(d.searchResultUrls) ? d.searchResultUrls.slice(0, 200).map((u) => String(u).slice(0, 500)) : null,
+    citation_urls: Array.isArray(d.citationUrls) ? d.citationUrls.slice(0, 200).map((u) => String(u).slice(0, 500)) : null,
+    calls: Array.isArray(d.calls) ? d.calls.slice(0, 20) : null,
     model_thread_count: int(d.modelThreadCount),
     used_fallback: typeof d.usedFallback === 'boolean' ? d.usedFallback : null,
     returned_count: int(entry.returnedCount),
