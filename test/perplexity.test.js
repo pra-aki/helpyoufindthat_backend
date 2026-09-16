@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.js';
 import { getForum } from '../src/forums/index.js';
 import { searchThreads, parseThreadsResponse, formatPerplexityDate, buildUserPrompt } from '../src/services/perplexity.js';
 
-const config = loadConfig({ PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
 const reddit = getForum('reddit');
 const hn = getForum('hackernews');
 const x = getForum('x');

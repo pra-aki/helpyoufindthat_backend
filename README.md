@@ -204,7 +204,7 @@ The backend talks to Supabase's REST endpoint with the caller's own token, so no
 
 ## How search works
 
-Each request makes one Perplexity chat completion per requested forum, all at the same time, and ranks the threads from all of them together by score. A single call over several sites lets one site take nearly every retrieved source, so the other sites' best threads are never seen. Searching all six forums therefore costs six Perplexity calls, and takes about as long as the slowest one. Each call has:
+Each request makes one Perplexity chat completion per requested forum, all at the same time, and ranks the threads from all of them together by score. A single call over several sites lets one site take nearly every retrieved source, so the other sites' best threads are never seen. Searching all six forums therefore costs six Perplexity calls, and takes about as long as the slowest one. The calls do not all leave at once: Perplexity's rate limit covers the whole account, and firing six together got five rejected, so every call waits in a queue that releases one every `PERPLEXITY_MIN_INTERVAL_MS` (1.2 seconds by default, matching the lowest tier's 50 requests a minute). A six-forum search therefore spends about 6 seconds in the queue. A call that would wait longer than `PERPLEXITY_MAX_QUEUE_WAIT_MS` fails with 429 rather than hanging. The queue is per process, so running more than one instance would need a shared one. Each call has:
 
 - `search_domain_filter` restricted to that forum's domains
 - `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, at a higher cost)
@@ -227,6 +227,8 @@ Each row records:
 
 - **The request:** product, user, forums, requested thread count, and date range.
 - **What was sent:** the exact prompt, and the request settings (model, temperature, domain and date filters, search context size).
+Each call's entry also records `queuedMs`, the time it spent waiting for its turn, separately from its total duration.
+
 - **What came back:** how many sources Perplexity's search returned and their links, the citation links, a breakdown of each forum's call, how many threads the model proposed, how many were returned, and whether the raw-search fallback was used.
 - **What was discarded, and why:** every proposed thread the server dropped, with a reason of `invalid_url`, `not_in_sources`, `not_on_requested_forum`, `not_a_thread`, `duplicate`, `offering`, or `over_limit`.
 - **Everything else:** the model's problem statement, token usage, duration, and for failures the error and its HTTP status.
@@ -262,4 +264,6 @@ limit 5;
 | `PERPLEXITY_SEARCH_CONTEXT` | `medium` | `low`, `medium`, or `high` |
 | `PERPLEXITY_BASE_URL` | `https://api.perplexity.ai` | override for testing against a mock |
 | `PERPLEXITY_TIMEOUT_MS` | `60000` | |
+| `PERPLEXITY_MIN_INTERVAL_MS` | `1200` | spacing between Perplexity calls; 0 disables the queue |
+| `PERPLEXITY_MAX_QUEUE_WAIT_MS` | `30000` | a call queued longer than this fails with 429 |
 | `PORT` | `3000` | |

@@ -80,7 +80,7 @@ test('list builds the PostgREST query with ordering, paging, and optional filter
 
 // ---------- HTTP ----------
 
-const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';

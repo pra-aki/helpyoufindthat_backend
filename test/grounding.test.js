@@ -10,7 +10,7 @@ const hn = getForum('hackernews');
 const x = getForum('x');
 const quora = getForum('quora');
 const facebook = getForum('facebook-groups');
-const config = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 const day = (s) => new Date(`${s}T00:00:00Z`);
 const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const thread = (url, score = 0.5, over = {}) => ({ title: url, url, intent: 'seeking', asks_for: 'a', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: score, ...over });

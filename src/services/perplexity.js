@@ -1,4 +1,5 @@
 import { HttpError, PerplexityError } from '../errors.js';
+import { createRateLimiter } from './rateLimiter.js';
 import { fetchPage, extractPageContent } from './pageFetch.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -253,46 +254,66 @@ export function parseThreadsResponse(data, options) {
   return analyzeThreadsResponse(data, options).threads;
 }
 
-/** Sends one chat completion to Perplexity and returns the parsed JSON body, mapping failures to HTTP errors. */
-async function callPerplexity(requestBody, config, fetchImpl) {
+// One queue per configuration, so every Perplexity call this process makes is spaced out: searches,
+// website descriptions, and composed replies all draw on the same account-wide rate limit.
+const limiters = new WeakMap();
+const limiterFor = (perplexity) => {
+  let limiter = limiters.get(perplexity);
+  if (!limiter) {
+    limiter = createRateLimiter({ minIntervalMs: perplexity.minIntervalMs, maxWaitMs: perplexity.maxQueueWaitMs });
+    limiters.set(perplexity, limiter);
+  }
+  return limiter;
+};
+
+/**
+ * Sends one chat completion to Perplexity and returns the parsed JSON body, mapping
+ * failures to HTTP errors. The call waits in the shared queue first; `stats.queuedMs`
+ * reports how long that took.
+ */
+async function callPerplexity(requestBody, config, fetchImpl, stats = {}) {
   const { apiKey, baseUrl, timeoutMs } = config.perplexity;
   if (!apiKey) {
     throw new PerplexityError('Server is missing PERPLEXITY_API_KEY', { status: 500 });
   }
 
-  let response;
-  try {
-    response = await fetchImpl(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (cause) {
-    const timedOut = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
-    throw new PerplexityError(timedOut ? `Perplexity request timed out after ${timeoutMs}ms` : 'Could not reach Perplexity', {
-      status: timedOut ? 504 : 502,
-      cause,
-    });
-  }
+  return limiterFor(config.perplexity).schedule(async ({ waitedMs }) => {
+    stats.queuedMs = waitedMs;
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => undefined);
-    throw new PerplexityError(`Perplexity request failed with HTTP ${response.status}`, {
-      status: response.status === 429 ? 429 : 502,
-      details: detail ? detail.slice(0, 500) : undefined,
-    });
-  }
+    let response;
+    try {
+      response = await fetchImpl(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (cause) {
+      const timedOut = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+      throw new PerplexityError(timedOut ? `Perplexity request timed out after ${timeoutMs}ms` : 'Could not reach Perplexity', {
+        status: timedOut ? 504 : 502,
+        cause,
+      });
+    }
 
-  try {
-    return await response.json();
-  } catch (cause) {
-    throw new PerplexityError('Perplexity returned a non-JSON response', { cause });
-  }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => undefined);
+      throw new PerplexityError(`Perplexity request failed with HTTP ${response.status}`, {
+        status: response.status === 429 ? 429 : 502,
+        details: detail ? detail.slice(0, 500) : undefined,
+      });
+    }
+
+    try {
+      return await response.json();
+    } catch (cause) {
+      throw new PerplexityError('Perplexity returned a non-JSON response', { cause });
+    }
+  });
 }
 
 const DESCRIBE_SCHEMA = {
@@ -576,11 +597,12 @@ export async function searchThreads({ productDescription, forums, threads, from,
         response_format: { type: 'json_schema', json_schema: { schema: RESPONSE_SCHEMA } },
       };
       const callStart = Date.now();
+      const stats = {};
       try {
-        const data = await callPerplexity(requestBody, config, fetchImpl);
-        return { forum, prompt, ok: true, data, durationMs: Date.now() - callStart, analysis: analyzeThreadsResponse(data, { forums: [forum], threads }) };
+        const data = await callPerplexity(requestBody, config, fetchImpl, stats);
+        return { forum, prompt, ok: true, data, durationMs: Date.now() - callStart, queuedMs: stats.queuedMs ?? 0, analysis: analyzeThreadsResponse(data, { forums: [forum], threads }) };
       } catch (error) {
-        return { forum, prompt, ok: false, error, durationMs: Date.now() - callStart };
+        return { forum, prompt, ok: false, error, durationMs: Date.now() - callStart, queuedMs: stats.queuedMs ?? 0 };
       }
     }),
   );
@@ -594,6 +616,7 @@ export async function searchThreads({ productDescription, forums, threads, from,
           forum: c.forum.id,
           ok: true,
           durationMs: c.durationMs,
+          queuedMs: c.queuedMs,
           rawResultCount: Array.isArray(c.data.search_results) ? c.data.search_results.length : 0,
           citationCount: urlsOf(c.data.citations).length,
           modelThreadCount: c.analysis.modelThreadCount,
@@ -601,7 +624,7 @@ export async function searchThreads({ productDescription, forums, threads, from,
           usedFallback: c.analysis.usedFallback,
           usage: c.data.usage ?? null,
         }
-      : { forum: c.forum.id, ok: false, durationMs: c.durationMs, error: c.error?.message ?? String(c.error), status: c.error?.status ?? null },
+      : { forum: c.forum.id, ok: false, durationMs: c.durationMs, queuedMs: c.queuedMs, error: c.error?.message ?? String(c.error), status: c.error?.status ?? null },
   );
 
   const succeeded = calls.filter((c) => c.ok);

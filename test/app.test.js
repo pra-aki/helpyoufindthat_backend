@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { HttpError } from '../src/errors.js';
 
-const config = loadConfig({ PERPLEXITY_API_KEY: 'test-key', SUPABASE_URL: 'https://abc.supabase.co', RATE_LIMIT_PER_MINUTE: '3', CORS_ORIGINS: 'https://app.example.com' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'test-key', SUPABASE_URL: 'https://abc.supabase.co', RATE_LIMIT_PER_MINUTE: '3', CORS_ORIGINS: 'https://app.example.com' });
 let server;
 let base;
 let lastSearchArgs;

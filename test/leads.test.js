@@ -56,7 +56,7 @@ test('remove issues a scoped DELETE and returns the deleted ids', async () => {
 
 // ---------- describeWebsite ----------
 
-const pplx = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
+const pplx = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 
 const unreachable = async () => { throw Object.assign(new Error('the domain does not resolve'), { code: 'ENOTFOUND' }); };
 const describeReply = (over = {}) => jsonRes({ model: 'sonar-pro', usage: { total_tokens: 1 }, search_results: [{ url: 'https://www.acme.com/' }], choices: [{ message: { content: JSON.stringify({ name: ' Acme ', description: 'Acme reminds landscapers to call leads back.', problem: 'I keep forgetting to follow up', audience: 'small crews', confidence: 0.9, ...over }) } }] });
@@ -117,7 +117,7 @@ test('describeWebsite fails with 502 when the model returns no description', asy
 
 // ---------- HTTP ----------
 
-const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'd' }; }, list: async () => [], create: async () => ({}) };
 let store = [A, B, C];

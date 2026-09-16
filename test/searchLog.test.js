@@ -10,7 +10,7 @@ import { createSearchLogService, toSearchRequestRow } from '../src/services/sear
 const reddit = getForum('reddit');
 const hn = getForum('hackernews');
 const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const pplx = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
+const pplx = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 const day = (s) => new Date(`${s}T00:00:00Z`);
 const t = (over) => ({ title: 'T', url: '', intent: 'seeking', asks_for: 'a', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.5, ...over });
 const completion = (threads, searchResults = []) => ({ model: 'sonar-pro', usage: { total_tokens: 42 }, search_results: searchResults, choices: [{ message: { content: JSON.stringify({ problem: 'I cannot find customers', threads }) } }] });
@@ -131,7 +131,7 @@ test('record writes to search_requests as the caller and never throws', async ()
 
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
-const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const fakeProducts = { get: async (tok, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'Finds leads', website: null }; }, list: async () => [], create: async () => ({}), update: async () => ({}) };
 const fakeResults = { save: async (tok, pid, threads) => threads.map((x, i) => ({ id: `r${i}`, link: x.url })), list: async () => ({ results: [], total: 0 }) };

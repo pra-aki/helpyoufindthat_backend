@@ -10,7 +10,7 @@ import { composeGeneralReply, parseThreadsResponse, buildUserPrompt, searchThrea
 import { getForum } from '../src/forums/index.js';
 
 const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const pplx = loadConfig({ PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
+const pplx = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'k', PERPLEXITY_BASE_URL: 'https://pplx.test' });
 const reddit = getForum('reddit');
 
 // ---------- search no longer drafts replies ----------
@@ -107,7 +107,7 @@ test('parseProductRequest accepts an optional generalReply', () => {
 
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const OTHER = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
-const config = loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
+const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon', PERPLEXITY_API_KEY: 'k' });
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 let storedReply = null;
 const fakeProducts = {
