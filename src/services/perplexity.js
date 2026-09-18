@@ -29,7 +29,7 @@ const RESPONSE_SCHEMA = {
           posted_at: { type: 'string', description: 'When it was posted, as ISO 8601 date if known, otherwise empty string' },
           relevance_score: {
             type: 'number',
-            description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; 0.3 or lower = general discussion of the topic or a loose fit, included to fill the requested count',
+            description: 'How strongly the author is looking for something like this product, 0 to 1. 1 = explicitly asking for a tool or service that does what the product does; 0.5 = describes the problem and wants advice; 0.25 or lower = general discussion of the topic or a loose fit, worth returning but not a real lead',
           },
         },
         required: ['title', 'url', 'intent', 'asks_for', 'summary', 'why_relevant', 'posted_at', 'relevance_score'],
@@ -57,7 +57,7 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     ? 'Rank by how strongly the author is seeking something like this product.'
     : 'Rank by how strongly the author is seeking something like this product, across all sites together; do not favour one site over another.';
   return [
-    `Search for ${threads} threads or discussions in user forums on ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:`,
+    `Search for up to ${threads} threads or discussions in user forums on ${where} posted between ${isoDay(from)} and ${isoDay(to)} (inclusive) where users are looking for a solution: a recommendation, a tool, a service, an alternative, or advice, for a problem that can be solved by our product:`,
     '',
     '"""',
     productDescription,
@@ -69,7 +69,7 @@ export function buildUserPrompt({ productDescription, forums, threads, from, to 
     '- posts where the author already has a solution and is sharing or explaining it',
     'Posts like these are "offering" even if the topic matches the product exactly, so leave them out at any score.',
     'A partial fit still counts. If the product would help with part of what the author is asking about, include the thread and score it accordingly.',
-    `Return ${threads} threads. If fewer than ${threads} strongly match, fill the rest with the closest weaker matches, such as general discussion of the topic or a loose fit, and give those a relevance score of 0.3 or lower. Do not return fewer than ${threads} while real threads remain in your search results.`,
+    `Return up to ${threads} threads, and fewer when fewer fit. Never add a thread to reach ${threads}: if only three of the pages you were given fit, return three. Include a page that only loosely fits rather than leaving it out, and score it 0.25 or lower so it ranks below the real matches.`,
     '',
     `${ranking} Only include threads whose URL appeared in your search results, copied exactly; never invent, guess, or alter a URL.`,
     '',

@@ -45,7 +45,7 @@ test('sends the right request to Perplexity: auth header, domain filter, date wi
   assert.match(captured.body.messages[0].content, /posted between 2026-08-26 and 2026-09-02 \(inclusive\)/);
   assert.equal(captured.body.response_format.type, 'json_schema');
   assert.match(captured.body.messages[0].content, /A tool that does X/);
-  assert.match(captured.body.messages[0].content, /^Search for 3 threads or discussions in user forums on Reddit posted between/);
+  assert.match(captured.body.messages[0].content, /^Search for up to 3 threads or discussions in user forums on Reddit posted between/);
   assert.equal(captured.body.messages.length, 1, 'search sends a single user message');
   assert.equal(captured.body.messages[0].role, 'user');
   assert.match(captured.body.messages[0].content, /never invent, guess, or alter a URL/);
@@ -169,7 +169,7 @@ test('the problem statement is surfaced in meta', async () => {
 
 test('prompt opens with the search request, then the product, with no problem-statement step or per-site hints', () => {
   const p = buildUserPrompt({ productDescription: 'An app that reminds owners to follow up with leads', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.match(p, /^Search for 5 threads or discussions in user forums on Reddit posted between 2026-09-01 and 2026-09-02 \(inclusive\)/);
+  assert.match(p, /^Search for up to 5 threads or discussions in user forums on Reddit posted between 2026-09-01 and 2026-09-02 \(inclusive\)/);
   assert.match(p, /our product:\n\n"""\nAn app that reminds owners to follow up with leads\n"""/);
   for (const gone of ['We sell this product', 'state the problem', 'HAVE that problem', 'Search the way those people write', 'What counts as a thread', 'A thread is a Reddit post', 'empty list']) {
     assert.ok(!p.includes(gone), `prompt should not contain "${gone}"`);
@@ -177,21 +177,20 @@ test('prompt opens with the search request, then the product, with no problem-st
   assert.match(p, /A partial fit still counts/);
 });
 
-test('the prompt asks for the full count and fills it with low-scored weaker matches instead of returning fewer', () => {
+test('the prompt sets a maximum rather than a minimum, and keeps weak matches at a low score', () => {
   const p = buildUserPrompt({ productDescription: 'X', forums: [reddit], threads: 7, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z') });
-  assert.ok(!/up to 7/.test(p), 'no "up to" wording');
-  assert.match(p, /Return 7 threads\. If fewer than 7 strongly match, fill the rest with the closest weaker matches/);
-  assert.match(p, /give those a relevance score of 0\.3 or lower/);
-  assert.match(p, /Do not return fewer than 7 while real threads remain in your search results/);
-
-  const neverInclude = p.slice(p.indexOf('Never include posts that offer rather than ask:'), p.indexOf('Posts like these are "offering"'));
-  assert.match(neverInclude, /product launches/);
-  assert.ok(!/general discussion/.test(neverInclude), 'general discussion is no longer excluded');
-  assert.match(p, /leave them out at any score/);
+  assert.match(p, /^Search for up to 7 threads/);
+  assert.match(p, /Return up to 7 threads, and fewer when fewer fit/);
+  assert.match(p, /Never add a thread to reach 7/);
+  assert.match(p, /score it 0\.25 or lower so it ranks below the real matches/);
+  for (const gone of ['fill the rest', 'Do not return fewer', 'closest weaker matches']) {
+    assert.ok(!p.includes(gone), `the prompt should no longer say "${gone}"`);
+  }
+  assert.match(p, /A partial fit still counts/);
 });
 
 test('the score description names the low band as the fill', async () => {
   let body;
   await searchThreads({ productDescription: 'X', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z'), config, fetchImpl: async (u, init) => { body = JSON.parse(init.body); return jsonResponse(completion([])); } });
-  assert.match(body.response_format.json_schema.schema.properties.threads.items.properties.relevance_score.description, /0\.3 or lower = general discussion of the topic or a loose fit, included to fill the requested count/);
+  assert.match(body.response_format.json_schema.schema.properties.threads.items.properties.relevance_score.description, /0\.25 or lower = general discussion of the topic or a loose fit, worth returning but not a real lead/);
 });

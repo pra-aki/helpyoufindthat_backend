@@ -55,7 +55,7 @@ Lists supported forums with their ids, aliases, and searched domains.
 | `productId` | yes | | UUID of one of your products (see `POST /api/products`). Its stored description drives the search, and the results are stored under it. |
 | `productDescription` | no | the product's | One-off override of the description for this search only. Max 2000 chars. |
 | `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
-| `threads` | no | 10 | How many threads to return in total, across all requested forums (1 to 50). Weaker matches fill the count with low scores rather than being left out. Also accepted as `x` or `maxThreads`. |
+| `threads` | no | 10 | Maximum number of threads to return in total, across all requested forums (1 to 50). A search returns fewer when fewer fit; it is never padded. Weak but real matches are included with a score of 0.25 or lower rather than dropped. Also accepted as `x` or `maxThreads`. |
 | `from` | no | | First day to include, `YYYY-MM-DD` (UTC). Also `startDate` / `start_date`. |
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |

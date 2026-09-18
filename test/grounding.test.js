@@ -82,7 +82,7 @@ test('searchThreads starts one call per forum at the same time, each searching o
 
   assert.deepEqual(bodies.map((b) => b.search_domain_filter), [['reddit.com'], ['news.ycombinator.com'], ['x.com', 'twitter.com']]);
   for (const [b, name] of [[bodies[0], 'Reddit'], [bodies[1], 'Hacker News'], [bodies[2], 'X \\(Twitter\\)']]) {
-    assert.match(b.messages[0].content, new RegExp(`^Search for 3 threads or discussions in user forums on ${name} posted between`));
+    assert.match(b.messages[0].content, new RegExp(`^Search for up to 3 threads or discussions in user forums on ${name} posted between`));
     assert.ok(!/across all sites/.test(b.messages[0].content), 'each call names a single forum');
   }
   assert.deepEqual(threads.map((t) => [t.source, t.relevanceScore]), [['x', 0.9], ['hackernews', 0.6], ['reddit', 0.4]], 'merged across forums by score');
@@ -90,7 +90,7 @@ test('searchThreads starts one call per forum at the same time, each searching o
   assert.deepEqual(meta.failedForums, []);
   assert.deepEqual(meta.usage, { total_tokens: 30 }, 'usage is summed across calls');
   assert.equal(diagnostics.calls.length, 3);
-  assert.match(diagnostics.prompt, /^=== reddit ===\nSearch for 3 threads/);
+  assert.match(diagnostics.prompt, /^=== reddit ===\nSearch for up to 3 threads/);
   assert.deepEqual(diagnostics.settings.search_domain_filter_by_forum, { reddit: ['reddit.com'], hackernews: ['news.ycombinator.com'], x: ['x.com', 'twitter.com'] });
 });
 
