@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
 import { getForum } from '../src/forums/index.js';
-import { searchThreads, parseThreadsResponse, formatPerplexityDate, buildUserPrompt } from '../src/services/perplexity.js';
+import { searchThreads, parseThreadsResponse, formatPerplexityDate, buildUserPrompt, titleKey } from '../src/services/perplexity.js';
 
 const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'test-key', PERPLEXITY_BASE_URL: 'https://pplx.test/' });
 const reddit = getForum('reddit');
@@ -82,6 +82,29 @@ test('a multi-forum search sends one call per forum and tags each thread with it
   assert.deepEqual(threads.map((t) => [t.title, t.source]), [['Reddit', 'reddit'], ['X', 'x'], ['HN', 'hackernews']]);
   assert.deepEqual(meta.searchedForums, ['reddit', 'hackernews', 'x']);
   assert.deepEqual([meta.from, meta.to], ['2026-09-04', '2026-09-04']);
+});
+
+test('the same post crossposted to two subreddits is kept once, at its best score', async () => {
+  const crosspost = (sub, id, score) => ({ title: 'Lost the website I used to track my movies & shows — any recommendations?', url: `https://www.reddit.com/r/${sub}/comments/${id}/lost_the_website/`, summary: 's', why_relevant: 'w', posted_at: '', relevance_score: score });
+  const data = completion([
+    crosspost('teenagers', 'aaa111', 0.8),
+    crosspost('TeenIndia', 'bbb222', 0.95),
+    { title: 'Something else entirely', url: 'https://www.reddit.com/r/movies/comments/ccc333/else/', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.5 },
+  ]);
+  const day = new Date('2026-09-04T00:00:00Z');
+  const { threads, diagnostics } = await searchThreads({ productDescription: 'd', forums: [reddit], threads: 10, from: day, to: day, config, fetchImpl: async () => jsonResponse(data) });
+  assert.deepEqual(threads.map((t) => [t.url, t.relevanceScore]), [
+    ['https://www.reddit.com/r/TeenIndia/comments/bbb222/lost_the_website/', 0.95],
+    ['https://www.reddit.com/r/movies/comments/ccc333/else/', 0.5],
+  ]);
+  assert.deepEqual(diagnostics.dropped, [{ url: 'https://www.reddit.com/r/teenagers/comments/aaa111/lost_the_website/', reason: 'duplicate_title', forum: 'reddit' }]);
+});
+
+test('titleKey ignores case and punctuation, and gives up on titles too short to compare', () => {
+  assert.equal(titleKey('Lost the website — any recommendations?'), titleKey('lost the website any recommendations'));
+  assert.notEqual(titleKey('Movie suggestions for tonight'), titleKey('Movie suggestions for tomorrow'));
+  assert.equal(titleKey('Movie help'), '', 'too short to be evidence of a duplicate');
+  assert.equal(titleKey(null), '');
 });
 
 test('filters to forum domains and real thread URLs, dedupes, sorts by score, limits to x', () => {

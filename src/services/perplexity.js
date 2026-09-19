@@ -553,6 +553,19 @@ const sumUsage = (usages) => {
   return present.reduce((acc, u) => add(acc, u), {});
 };
 
+/**
+ * A title reduced to its words, for spotting the same post crossposted to two places:
+ * different subreddits, so different URLs, but one thread as far as a lead is concerned.
+ * Empty when the title carries too little to compare.
+ */
+export const titleKey = (title) => {
+  const key = String(title ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  return key.length >= 12 ? key : '';
+};
+
 const urlsOf = (list) =>
   Array.isArray(list) ? list.map((r) => (typeof r === 'string' ? r : r?.url)).filter((u) => typeof u === 'string' && u) : [];
 
@@ -635,21 +648,32 @@ export async function searchThreads({ productDescription, forums, threads, from,
   }
 
   const dropped = [];
-  const merged = [];
-  const seen = new Set();
+  const candidates = [];
   for (const c of succeeded) {
     for (const d of c.analysis.dropped) dropped.push({ ...d, forum: c.forum.id });
-    for (const t of c.analysis.threads) {
-      const key = canonicalKey(new URL(t.url));
-      if (seen.has(key)) {
-        dropped.push({ url: t.url, reason: 'duplicate', forum: c.forum.id });
-        continue;
-      }
-      seen.add(key);
-      merged.push(t);
-    }
+    candidates.push(...c.analysis.threads);
   }
-  merged.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+  // Ranked before deduping, so the best-scoring copy of a thread is the one kept.
+  candidates.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  const merged = [];
+  const seen = new Set();
+  const seenTitles = new Set();
+  for (const t of candidates) {
+    const key = canonicalKey(new URL(t.url));
+    if (seen.has(key)) {
+      dropped.push({ url: t.url, reason: 'duplicate', forum: t.source });
+      continue;
+    }
+    const title = titleKey(t.title);
+    if (title && seenTitles.has(title)) {
+      dropped.push({ url: t.url, reason: 'duplicate_title', forum: t.source });
+      continue;
+    }
+    seen.add(key);
+    if (title) seenTitles.add(title);
+    merged.push(t);
+  }
   for (const extra of merged.slice(threads)) dropped.push({ url: extra.url, reason: 'over_limit', forum: extra.source });
 
   const rawResultCount = succeeded.reduce((n, c) => n + (Array.isArray(c.data.search_results) ? c.data.search_results.length : 0), 0);
