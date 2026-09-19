@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
-import { parseSearchRequest, parseForums, parseDateRange, isoDay } from '../src/validation.js';
+import { parseSearchRequest, parseForums, parseDateRange, isoDay, parseBoolean } from '../src/validation.js';
 
 const now = new Date('2026-09-04T15:30:00Z');
 
@@ -89,4 +89,12 @@ test('date range: rejects bad dates, future end, reversed range, and spans over 
   assert.deepEqual(range({ from: '2026-06-04', to: '2026-09-04' }), ['2026-06-04', '2026-09-04', 92], 'exactly 92 days is allowed');
   assert.deepEqual(range({ from: '2026-06-01', to: '2026-08-31' }), ['2026-06-01', '2026-08-31', 91], 'three calendar months fit');
   bad({ days: 100 }, /at most 92/);
+});
+
+test('parseBoolean accepts JSON booleans and their string spellings, and nothing else', () => {
+  assert.equal(parseBoolean(true, 'responded'), true);
+  assert.equal(parseBoolean('false', 'responded'), false);
+  for (const bad of [undefined, null, 'yes', 1, 0, '']) {
+    assert.throws(() => parseBoolean(bad, 'responded'), (e) => e.status === 400 && e.details.field === 'responded');
+  }
 });

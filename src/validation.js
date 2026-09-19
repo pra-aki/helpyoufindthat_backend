@@ -148,6 +148,14 @@ export function parseUuid(value, name = 'id') {
   return value.toLowerCase();
 }
 
+/** A required boolean body field. Accepts JSON true/false and the strings "true"/"false". */
+export function parseBoolean(value, name) {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new HttpError(400, `"${name}" must be true or false`, { field: name, received: value });
+}
+
 const requiredText = (value, { name, max }) => {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new HttpError(400, `"${name}" is required and must be a non-empty string`, { field: name });
@@ -266,4 +274,83 @@ export function parseResultsQuery(source, { defaultLimit = 50, maxLimit = 1000 }
   }
 
   return { limit, offset, source: sourceId, minScore };
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A plausible email address, trimmed, or a 400. */
+export function parseEmail(value, name = 'email') {
+  if (typeof value !== 'string') throw new HttpError(400, `"${name}" must be a string`, { field: name });
+  const email = value.trim();
+  if (email.length === 0 || email.length > 320 || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, `"${name}" must be an email address`, { field: name, received: value });
+  }
+  return email;
+}
+
+const parseScore = (value, { name, fallback }) => {
+  if (value === undefined) return fallback;
+  const n = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(n) || n < 0 || n > 1) throw new HttpError(400, `"${name}" must be a number between 0 and 1`, { field: name, received: value });
+  return n;
+};
+
+/**
+ * Validates a request to schedule a daily search. Returns
+ * { forums, threads, minScore, startDate, endDate, email }, where the dates are UTC days
+ * and email is undefined when the caller did not supply one.
+ *
+ * Accepted parameter spellings:
+ *   forum | forums | forumName | forum_name     (id, list of ids, comma-separated ids, or "all")
+ *   threads | maxThreads | max_threads          (per run; default 10, max 50)
+ *   endDate | end_date | to | until | runUntil  (YYYY-MM-DD, inclusive; today or later, at most maxDays out)
+ *   minScore | min_score                        (0 to 1; default 0.8)
+ *   email                                       (defaults to the signed-in user's address)
+ */
+export function parseJobRequest(source, config, { now = new Date() } = {}) {
+  if (!source || typeof source !== 'object') throw new HttpError(400, 'Request body must be a JSON object');
+
+  const forums = parseForums(firstDefined(source, ['forum', 'forums', 'forumName', 'forum_name']));
+  const threads = toPositiveInt(firstDefined(source, ['threads', 'maxThreads', 'max_threads']), {
+    name: 'threads',
+    fallback: config.defaults.threads,
+    max: config.limits.maxThreads,
+  });
+  const minScore = parseScore(firstDefined(source, ['minScore', 'min_score']), { name: 'minScore', fallback: config.jobs.defaultMinScore });
+
+  const endRaw = firstDefined(source, ['endDate', 'end_date', 'to', 'until', 'runUntil', 'run_until']);
+  if (endRaw === undefined) throw new HttpError(400, '"endDate" is required: the last day the job should run, like 2026-10-01', { field: 'endDate' });
+  const endDate = parseDate(endRaw, 'endDate');
+  const startDate = utcDay(now);
+  if (endDate < startDate) throw new HttpError(400, '"endDate" cannot be in the past', { field: 'endDate', received: isoDay(endDate), today: isoDay(startDate) });
+  const spanDays = Math.round((endDate - startDate) / DAY_MS);
+  if (spanDays > config.limits.maxDays) {
+    throw new HttpError(400, `"endDate" may be at most ${config.limits.maxDays} days from today`, { field: 'endDate', received: isoDay(endDate), spanDays, maxDays: config.limits.maxDays });
+  }
+
+  const emailRaw = firstDefined(source, ['email', 'notifyEmail', 'notify_email']);
+  const email = emailRaw === undefined ? undefined : parseEmail(emailRaw);
+
+  return { forums, threads, minScore, startDate, endDate, email };
+}
+
+const JOB_STATUSES = ['active', 'completed', 'cancelled'];
+
+/** Query parameters for listing jobs: productId and status, both optional. */
+export function parseJobsQuery(source) {
+  const productRaw = firstDefined(source, ['productId', 'product_id']);
+  const productId = productRaw === undefined ? undefined : parseUuid(productRaw, 'productId');
+  const statusRaw = firstDefined(source, ['status']);
+  let status;
+  if (statusRaw !== undefined) {
+    status = String(statusRaw).trim().toLowerCase();
+    if (!JOB_STATUSES.includes(status)) throw new HttpError(400, `"status" must be one of ${JOB_STATUSES.join(', ')}`, { field: 'status', received: statusRaw });
+  }
+  return { productId, status };
+}
+
+/** Query parameters for listing a job's runs: limit (default 30, max 365) and offset. */
+export function parseRunsQuery(source) {
+  const { limit, offset } = parseResultsQuery({ limit: firstDefined(source, ['limit']), offset: firstDefined(source, ['offset']) }, { defaultLimit: 30, maxLimit: 365 });
+  return { limit, offset };
 }

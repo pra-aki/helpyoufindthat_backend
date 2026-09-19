@@ -79,6 +79,21 @@ test('save marks a link already stored under the product as not new, asking for 
   assert.equal(q.link, 'in.("https://www.reddit.com/r/a/comments/x1/t/","https://news.ycombinator.com/item?id=1,2")', 'links are quoted, so a comma in one does not split the list');
 });
 
+test('setResponded patches the row under its product, and reports a missing lead as null', async () => {
+  const calls = [];
+  const db = { update: async (token, table, query, patch) => { calls.push([query, patch]); return query.id === 'eq.r1' ? { id: 'r1', product_id: 'prod-1', link: 'l', responded_at: patch.responded_at } : (() => { throw new HttpError(404, 'Not found'); })(); } };
+  const svc = createResultsService(db);
+  const at = new Date('2026-09-19T10:00:00Z');
+
+  const marked = await svc.setResponded('tok', 'prod-1', 'r1', true, { at });
+  assert.equal(marked.respondedAt, '2026-09-19T10:00:00.000Z');
+  assert.deepEqual(calls[0], [{ id: 'eq.r1', product_id: 'eq.prod-1' }, { responded_at: '2026-09-19T10:00:00.000Z' }], 'the product scopes the update');
+
+  assert.equal((await svc.setResponded('tok', 'prod-1', 'r1', false, { at })).respondedAt, null);
+  assert.equal(calls[1][1].responded_at, null, 'unmarking clears the column');
+  assert.equal(await svc.setResponded('tok', 'prod-1', 'gone', true), null, 'no such lead under this product');
+});
+
 test('list builds the PostgREST query with ordering, paging, and optional filters', async () => {
   let q;
   const db = { selectPage: async (token, table, query) => { q = query; return { rows: [{ id: '1', product_id: 'p', source_site: 'x', link: 'l', relevance_score: '0.500', search_date: 's', created_at: 'c' }], total: 7 }; } };

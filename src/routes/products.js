@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { parseProductRequest, parseUuid, parseUuidList, parseResultsQuery, parseWebsite } from '../validation.js';
+import { parseProductRequest, parseUuid, parseUuidList, parseResultsQuery, parseWebsite, parseBoolean } from '../validation.js';
 import { describeWebsite, composeGeneralReply } from '../services/perplexity.js';
 
 const bearer = (req) => (req.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
@@ -62,6 +62,18 @@ export function productsRouter({ config, products, results, describe = describeW
     const { reply, notes, meta } = await compose({ product, config });
     const updated = await products.setGeneralReply(token, id, reply);
     res.json({ product: updated, notes, meta });
+  });
+
+  // PATCH /api/products/:id/results/:resultId   { "responded": true }   -> marks a lead replied to
+  router.patch('/products/:id/results/:resultId', ...protect, async (req, res) => {
+    const id = parseUuid(req.params.id);
+    const resultId = parseUuid(req.params.resultId, 'resultId');
+    const responded = parseBoolean(req.body?.responded, 'responded');
+    const token = bearer(req);
+    await products.get(token, id);
+    const result = await results.setResponded(token, id, resultId, responded);
+    if (!result) return res.status(404).json({ error: { message: 'Lead not found' } });
+    res.json({ productId: id, result });
   });
 
   // DELETE /api/products/:id/results/:resultId   -> deletes one lead

@@ -12,6 +12,7 @@ const A = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const B = 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const C = 'c2e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const PID = 'd3e90fbd-9ddf-4c0e-a953-616a94d4891c';
+const MISSING = 'e4e90fbd-9ddf-4c0e-a953-616a94d4891c';
 
 // ---------- validation ----------
 
@@ -121,7 +122,16 @@ const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', SUPABASE_URL: 'http
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'P', description: 'd' }; }, list: async () => [], create: async () => ({}) };
 let store = [A, B, C];
-const fakeResults = { remove: async (token, productId, ids) => { const hit = ids.filter((x) => store.includes(x)); store = store.filter((x) => !hit.includes(x)); return hit; }, save: async () => [], list: async () => ({ results: [], total: 0 }) };
+let respondedCalls = [];
+const fakeResults = {
+  remove: async (token, productId, ids) => { const hit = ids.filter((x) => store.includes(x)); store = store.filter((x) => !hit.includes(x)); return hit; },
+  save: async () => [],
+  list: async () => ({ results: [], total: 0 }),
+  setResponded: async (token, productId, id, responded) => {
+    respondedCalls.push([productId, id, responded]);
+    return store.includes(id) ? { id, productId, link: 'https://www.reddit.com/r/a/comments/x/y/', respondedAt: responded ? '2026-09-19T10:00:00.000Z' : null } : null;
+  },
+};
 let describeCalls = [];
 const fakeDescribe = async ({ website }) => { describeCalls.push(website); return { website, name: 'N', description: 'D', problem: 'P', audience: 'A', confidence: 1, meta: {} }; };
 let server; let base;
@@ -137,6 +147,26 @@ test('DELETE one lead: 200 with the id, 404 when it is not there, 401 without au
   assert.equal((await fetch(`${base}/api/products/${PID}/results/${A}`, { method: 'DELETE', headers: auth })).status, 404);
   assert.equal((await fetch(`${base}/api/products/${PID}/results/${B}`, { method: 'DELETE' })).status, 401);
   assert.equal((await fetch(`${base}/api/products/${B}/results/${B}`, { method: 'DELETE', headers: auth })).status, 404, 'foreign product');
+});
+
+test('PATCH one lead marks it responded to, and unmarks it', async () => {
+  respondedCalls = [];
+  const patch = (productId, resultId, body, headers = { ...auth, ...json }) =>
+    fetch(`${base}/api/products/${productId}/results/${resultId}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+
+  const marked = await patch(PID, B, { responded: true });
+  assert.equal(marked.status, 200);
+  assert.deepEqual(await marked.json(), { productId: PID, result: { id: B, productId: PID, link: 'https://www.reddit.com/r/a/comments/x/y/', respondedAt: '2026-09-19T10:00:00.000Z' } });
+
+  const cleared = await patch(PID, B, { responded: false });
+  assert.equal((await cleared.json()).result.respondedAt, null);
+  assert.deepEqual(respondedCalls, [[PID, B, true], [PID, B, false]]);
+
+  assert.equal((await patch(PID, MISSING, { responded: true })).status, 404, 'a lead that is not there');
+  assert.equal((await patch(B, B, { responded: true })).status, 404, 'foreign product');
+  assert.equal((await patch(PID, B, {})).status, 400, 'responded is required');
+  assert.equal((await patch(PID, B, { responded: 'yes' })).status, 400, 'and must be a boolean');
+  assert.equal((await patch(PID, B, { responded: true }, json)).status, 401, 'no token');
 });
 
 test('DELETE several leads via JSON body or query string, reporting which were not found', async () => {

@@ -1,3 +1,5 @@
+import { HttpError } from '../errors.js';
+
 /**
  * Stored search results. One row per (product, link); repeat finds refresh
  * search_date and the score rather than adding rows.
@@ -14,6 +16,7 @@ const toApi = (row) =>
     postedAt: row.posted_at ?? null,
     relevanceScore: row.relevance_score === null || row.relevance_score === undefined ? null : Number(row.relevance_score),
     searchDate: row.search_date,
+    respondedAt: row.responded_at ?? null,
     createdAt: row.created_at,
   };
 
@@ -71,6 +74,26 @@ export function createResultsService(db) {
       const stored = await db.upsert(token, 'search_results', rows, { onConflict: 'product_id,link' });
       const byLink = new Map(stored.map((r) => [r.link, { ...toApi(r), isNew: !before.has(r.link) }]));
       return rows.map((r) => byLink.get(r.link)).filter(Boolean);
+    },
+
+    /**
+     * Marks one lead as responded to, or clears the mark. The product id is part of the
+     * filter, so a lead under someone else's product is simply not found. Returns the
+     * updated row, or null when there is no such lead.
+     */
+    async setResponded(token, productId, id, responded, { at = new Date() } = {}) {
+      try {
+        const row = await db.update(
+          token,
+          'search_results',
+          { id: `eq.${id}`, product_id: `eq.${productId}` },
+          { responded_at: responded ? at.toISOString() : null },
+        );
+        return toApi(row);
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 404) return null;
+        throw err;
+      }
     },
 
     /** Deletes the given result ids under a product. Returns the ids actually deleted. */
