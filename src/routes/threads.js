@@ -61,6 +61,8 @@ export function threadsRouter({ config, search = searchThreads, products, result
     const stored = await results.save(token, productId, found.threads, { searchDate });
     const idByLink = new Map(stored.map((r) => [r.link, r.id]));
     const threads = found.threads.map((t) => ({ id: idByLink.get(t.url) ?? null, ...t }));
+    // A link stored for the first time is a new lead; one already under the product was found again.
+    const newCount = stored.filter((r) => r.isNew).length;
 
     res.json({
       query: {
@@ -75,7 +77,7 @@ export function threadsRouter({ config, search = searchThreads, products, result
       },
       count: threads.length,
       threads,
-      saved: { productId, count: stored.length, searchDate: searchDate.toISOString() },
+      saved: { productId, count: stored.length, newCount, existingCount: stored.length - newCount, searchDate: searchDate.toISOString() },
       meta: found.meta,
     });
   };

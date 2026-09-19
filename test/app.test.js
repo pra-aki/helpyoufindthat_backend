@@ -23,7 +23,7 @@ const fakeVerify = async (token) => {
 };
 const PID = 'a0e90fbd-9ddf-4c0e-a953-616a94d4891c';
 const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'Parking', description: 'A tool that finds parking' }; }, list: async () => [], create: async () => ({}) };
-const fakeResults = { save: async (token, productId, threads, { searchDate }) => threads.map((t, i) => ({ id: `r${i}`, link: t.url, searchDate })), list: async () => ({ results: [], total: 0 }) };
+const fakeResults = { save: async (token, productId, threads, { searchDate }) => threads.map((t, i) => ({ id: `r${i}`, link: t.url, searchDate, isNew: true })), list: async () => ({ results: [], total: 0 }) };
 const auth = { authorization: 'Bearer good' };
 const post = (body, headers = {}) =>
   fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
@@ -63,7 +63,7 @@ test('POST /api/threads with a valid token searches the product description, sto
   assert.equal(body.query.productId, PID);
   assert.equal(body.query.productName, 'Parking');
   assert.equal(body.query.productDescription, 'A tool that finds parking', 'description comes from the product');
-  assert.equal(body.saved.count, 1);
+  assert.deepEqual([body.saved.count, body.saved.newCount, body.saved.existingCount], [1, 1, 0], 'a row created by this search is a new lead');
   assert.equal(body.threads[0].id, 'r0');
   assert.deepEqual(body.query.forums, ['reddit']);
   assert.equal(body.query.threads, 10);
@@ -75,6 +75,21 @@ test('POST /api/threads with a valid token searches the product description, sto
   assert.equal(body.count, 1);
   assert.deepEqual(lastSearchArgs.forums.map((f) => f.id), ['reddit']);
   assert.equal(lastSearchArgs.user.id, 'user-1');
+});
+
+test('POST /api/threads counts a lead already stored under the product as existing', async () => {
+  const alreadyStored = { ...fakeResults, save: async (token, productId, threads) => threads.map((t, i) => ({ id: `r${i}`, link: t.url, isNew: false })) };
+  const fresh = createApp({ searchLog: { record: async () => true }, config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: alreadyStored }).listen(0);
+  await new Promise((r) => fresh.once('listening', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${fresh.address().port}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: 'reddit' }) });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual([body.saved.count, body.saved.newCount, body.saved.existingCount], [1, 0, 1]);
+    assert.equal(body.threads[0].id, 'r0', 'the existing row is still returned with its id');
+  } finally {
+    fresh.close();
+  }
 });
 
 test('GET /api/threads accepts query-string parameters including x and y', async () => {

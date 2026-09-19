@@ -54,7 +54,7 @@ const thread = (over = {}) => ({ title: 'T', url: 'https://www.reddit.com/r/a/co
 
 test('save maps threads to rows, dedupes links within a batch, and returns stored rows in input order', async () => {
   let sent;
-  const db = { upsert: async (token, table, rows) => { sent = rows; return rows.slice().reverse().map((r, i) => ({ id: `id${i}`, ...r })); } };
+  const db = { select: async () => [], upsert: async (token, table, rows) => { sent = rows; return rows.slice().reverse().map((r, i) => ({ id: `id${i}`, ...r })); } };
   const svc = createResultsService(db);
   const when = new Date('2026-09-04T10:00:00Z');
   const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews', postedAt: 'unknown' }), thread()], { searchDate: when });
@@ -62,7 +62,21 @@ test('save maps threads to rows, dedupes links within a batch, and returns store
   assert.deepEqual(sent[0], { product_id: 'prod-1', source_site: 'reddit', link: 'https://www.reddit.com/r/a/comments/x1/t/', title: 'T', summary: 'S', why_relevant: 'W', posted_at: '2026-09-01T00:00:00.000Z', relevance_score: 0.877, search_date: '2026-09-04T10:00:00.000Z' });
   assert.equal(sent[1].posted_at, null, 'unparseable dates become null');
   assert.deepEqual(stored.map((r) => [r.link, r.source, r.relevanceScore]), [['https://www.reddit.com/r/a/comments/x1/t/', 'reddit', 0.877], ['https://news.ycombinator.com/item?id=1', 'hackernews', 0.877]]);
+  assert.deepEqual(stored.map((r) => r.isNew), [true, true], 'links the product did not have are new');
   assert.deepEqual(await svc.save('tok', 'prod-1', []), [], 'nothing to save makes no request');
+});
+
+test('save marks a link already stored under the product as not new, asking for it by quoted link', async () => {
+  let q;
+  const db = {
+    select: async (token, table, query) => { q = query; return [{ link: 'https://www.reddit.com/r/a/comments/x1/t/' }]; },
+    upsert: async (token, table, rows) => rows.map((r, i) => ({ id: `id${i}`, ...r })),
+  };
+  const svc = createResultsService(db);
+  const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1,2', source: 'hackernews' })]);
+  assert.deepEqual(stored.map((r) => r.isNew), [false, true]);
+  assert.equal(q.product_id, 'eq.prod-1');
+  assert.equal(q.link, 'in.("https://www.reddit.com/r/a/comments/x1/t/","https://news.ycombinator.com/item?id=1,2")', 'links are quoted, so a comma in one does not split the list');
 });
 
 test('list builds the PostgREST query with ordering, paging, and optional filters', async () => {

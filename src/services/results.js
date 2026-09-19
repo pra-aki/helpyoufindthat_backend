@@ -23,9 +23,29 @@ const toTimestamp = (value) => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
+// PostgREST splits in.(...) on commas, so each value is quoted; links can contain commas.
+const quoteForIn = (value) => `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
+
 export function createResultsService(db) {
   return {
-    /** Upserts the threads from one search under a product. Returns the stored rows in the same order. */
+    /**
+     * Which of `links` are already stored under the product. One query, served by the
+     * (product_id, link) unique index.
+     */
+    async existingLinks(token, productId, links) {
+      if (links.length === 0) return new Set();
+      const rows = await db.select(token, 'search_results', {
+        select: 'link',
+        product_id: `eq.${productId}`,
+        link: `in.(${links.map(quoteForIn).join(',')})`,
+      });
+      return new Set((rows ?? []).map((r) => r.link));
+    },
+
+    /**
+     * Upserts the threads from one search under a product. Returns the stored rows in the same
+     * order, each with `isNew`: true when this search stored the link for the first time.
+     */
     async save(token, productId, threads, { searchDate = new Date() } = {}) {
       if (threads.length === 0) return [];
       const seen = new Set();
@@ -45,8 +65,11 @@ export function createResultsService(db) {
           search_date: searchDate.toISOString(),
         });
       }
+      // Read before writing: after the upsert every row looks the same, so this is the only
+      // moment the difference between a first find and a repeat find exists.
+      const before = await this.existingLinks(token, productId, rows.map((r) => r.link));
       const stored = await db.upsert(token, 'search_results', rows, { onConflict: 'product_id,link' });
-      const byLink = new Map(stored.map((r) => [r.link, toApi(r)]));
+      const byLink = new Map(stored.map((r) => [r.link, { ...toApi(r), isNew: !before.has(r.link) }]));
       return rows.map((r) => byLink.get(r.link)).filter(Boolean);
     },
 

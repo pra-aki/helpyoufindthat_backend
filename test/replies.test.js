@@ -40,7 +40,7 @@ test('the search schema has no suggested_reply and parsed threads carry none', a
 
 test('results are stored and returned without a reply', async () => {
   let sent;
-  const db = { upsert: async (t, table, rows) => { sent = rows; return rows.map((r, i) => ({ id: `r${i}`, suggested_reply: 'old draft still in the column', ...r })); } };
+  const db = { select: async () => [], upsert: async (t, table, rows) => { sent = rows; return rows.map((r, i) => ({ id: `r${i}`, suggested_reply: 'old draft still in the column', ...r })); } };
   const svc = createResultsService(db);
   const stored = await svc.save('t', 'p1', [{ url: 'https://www.reddit.com/r/a/comments/x/y/', source: 'reddit', title: 'T', summary: 's', whyRelevant: 'w', postedAt: null, relevanceScore: 0.5 }]);
   assert.ok(!('suggested_reply' in sent[0]), 'the column is not written');
