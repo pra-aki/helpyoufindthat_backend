@@ -16,11 +16,13 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
     const url = new URL(`${restUrl}/${table}`);
     for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, v);
 
-    const headers = {
-      apikey: anonKey,
-      Authorization: `Bearer ${token}`,
-      Accept: single ? 'application/vnd.pgrst.object+json' : 'application/json',
-    };
+    // A new-format secret key (sb_secret_...) is not a JWT. The gateway accepts it only in the
+    // apikey header and rejects it as a bearer token, so it takes the anon key's place and no
+    // Authorization header is sent. User tokens and the legacy service_role JWT go as a bearer
+    // token beside the anon key.
+    const isSecretKey = typeof token === 'string' && token.startsWith('sb_secret_');
+    const headers = isSecretKey ? { apikey: token } : { apikey: anonKey, Authorization: `Bearer ${token}` };
+    headers.Accept = single ? 'application/vnd.pgrst.object+json' : 'application/json';
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (prefer) headers.Prefer = prefer;
 

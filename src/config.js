@@ -10,6 +10,13 @@ const num = (value, fallback) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
+// A whole hour of the day, 0 to 23. Unlike num, 0 (midnight) is valid.
+const hour = (value, fallback) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+};
+
 const list = (value) =>
   String(value ?? '')
     .split(',')
@@ -42,6 +49,27 @@ export function loadConfig(env = process.env) {
       restUrl: supabaseUrl ? `${supabaseUrl}/rest/v1` : '',
       // Publishable (anon) key. Public; PostgREST needs it alongside the user's token.
       anonKey: env.SUPABASE_ANON_KEY ?? '',
+      // Service-role key. Secret; bypasses row-level security. Used only by the job runner, which
+      // searches on behalf of users who are not signed in at the time.
+      serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+    },
+    email: {
+      // Transactional email through Resend's HTTP API. Both must be set for job emails to go out.
+      resendApiKey: env.RESEND_API_KEY ?? '',
+      from: env.EMAIL_FROM ?? '',
+      baseUrl: (env.RESEND_BASE_URL ?? 'https://api.resend.com').replace(/\/+$/, ''),
+    },
+    jobs: {
+      // Jobs run daily at this UTC hour, so a user knows when the email arrives and the searches
+      // land off-peak. 0 to 23.
+      runAtHour: hour(env.SEARCH_JOBS_RUN_AT_HOUR, 3),
+      // The runner is on unless explicitly disabled, for deployments that trigger `npm run jobs`
+      // from an external scheduler instead.
+      enabled: env.SEARCH_JOBS_ENABLED !== 'false',
+      maxActivePerUser: num(env.SEARCH_JOBS_MAX_ACTIVE_PER_USER, 5),
+      // Due jobs are fetched this many at a time; the runner keeps going until none are left.
+      batchSize: num(env.SEARCH_JOBS_BATCH_SIZE, 20),
+      defaultMinScore: 0.8,
     },
     cors: {
       // Comma-separated list of allowed browser origins. Empty means any origin.

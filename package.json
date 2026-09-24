@@ -11,6 +11,7 @@
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
     "test": "node --test",
+    "jobs": "node --env-file-if-exists=.env src/jobs/run.js",
     "token": "node --env-file=.env scripts/get-token.mjs"
   },
   "dependencies": {
