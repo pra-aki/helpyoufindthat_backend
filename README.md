@@ -6,7 +6,7 @@ Express API that finds public forum threads where people are looking for a solut
 
 ```bash
 npm install
-cp .env.example .env   # set PERPLEXITY_API_KEY and SUPABASE_URL
+# create .env with the variables under Configuration below; at least PERPLEXITY_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
 npm start              # http://localhost:3000
 ```
 

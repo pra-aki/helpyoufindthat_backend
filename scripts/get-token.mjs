@@ -17,7 +17,7 @@ if (!email || !password) {
   process.exit(2);
 }
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('SUPABASE_URL and SUPABASE_ANON_KEY must be set (see .env.example)');
+  console.error('SUPABASE_URL and SUPABASE_ANON_KEY must be set (see Configuration in the README)');
   process.exit(2);
 }
 
