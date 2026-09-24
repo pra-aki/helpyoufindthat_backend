@@ -95,13 +95,16 @@ Response:
     }
   ],
   "saved": { "productId": "...", "count": 3, "searchDate": "..." },
+  "credits": { "spent": 1, "refunded": 0, "balance": 99 },
   "meta": { "model": "sonar-pro", "searchedForums": ["reddit"], "searchedDomains": ["reddit.com"], "from": "2026-08-28", "to": "2026-09-04", "usage": { }, "rawResultCount": 8 }
 }
 ```
 
 Every search is stored under its product; each thread's `id` is the stored row's id. Create the product first with `POST /api/products`.
 
-Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
+Each search costs credits: one per 10 leads requested, per forum, rounded up (see [Credits](#credits)). `credits` in the response says what this search cost after any refund, and the balance left.
+
+Errors are JSON: `{ "error": { "message": "...", "details": { } } }` with 400 for bad input, 401/403 for auth failures, 402 when the account has too few credits (`details` gives `cost` and `balance`), 429 for rate limits (yours or Perplexity's), 502/504 for upstream failures, and 500 if required configuration is missing.
 
 ### `POST /api/products`
 
@@ -202,9 +205,43 @@ Returns `{ productId, results: [ { id, productId, source, link, title, summary, 
 
 The backend talks to Supabase's REST endpoint with the caller's own token. This needs `SUPABASE_ANON_KEY` (the publishable key) in the environment. The only privileged key is `SUPABASE_SERVICE_ROLE_KEY`, used for scheduled searches alone.
 
-**Table access.** Access is granted explicitly in the migrations rather than left to Supabase's defaults, which stop applying to new tables on 2026-10-30. The anonymous role gets nothing, since the browser only uses Supabase to sign in. Signed-in users get what each table's row-level security policies allow, except that `search_jobs` and `search_job_runs` are read-only. The service role gets everything. A migration that creates a table must grant access to it in the same file, or the backend gets permission denied on it.
+**Table access.** Access is granted explicitly in the migrations rather than left to Supabase's defaults, which stop applying to new tables on 2026-10-30. The anonymous role gets nothing, since the browser only uses Supabase to sign in. Signed-in users get what each table's row-level security policies allow, except that `search_jobs`, `search_job_runs`, `user_credits`, and `credit_transactions` are read-only. The service role gets everything. A migration that creates a table must grant access to it in the same file, or the backend gets permission denied on it.
 
 Because signed-in users can write their own rows directly, any limit that protects cost has to be enforced by the database, not only by the backend. Product name, description, website, and general reply carry check constraints matching the backend's validation; the description matters most, since the job runner sends it to Perplexity every day.
+
+## Credits
+
+Every account starts with **100 credits**. Searching spends them; buying more will come later.
+
+| What | Costs |
+|---|---|
+| A search (`/api/threads`) | 1 credit per 10 leads requested, rounded up, for each forum. 10 leads on Reddit costs 1; 25 leads on Reddit and Hacker News costs 6. |
+| A scheduled job | 1 credit per forum, each day it runs, whatever its lead count |
+| Everything else | nothing, including `/api/products/describe` and composing a reply |
+
+A search is charged **before** it runs, once its input is valid and the product is known to be the caller's, so bad requests cost nothing. The charge is on what was asked for, not what came back: a search that finds fewer leads than requested costs the same. A search that fails outright is refunded in full, and a forum whose call failed is refunded its share. Without enough credits the search is refused with 402 and Perplexity is never called.
+
+A scheduled run is charged the same way, from the job owner's credits. Without enough, the run is recorded as an error with status 402, nothing is searched, and the job stays active and tries again the next day. Because that run did not succeed, the next one searches back over the missed days. A job's `creditsPerRun` says what each run costs, and each run's `creditsSpent` what it actually cost after refunds.
+
+### `GET /api/credits`
+
+The caller's balance, the pricing, and their credit history, newest first, with `limit` (default 20, max 100) and `offset`.
+
+```json
+{
+  "balance": 94,
+  "pricing": { "signupCredits": 100, "leadsPerCredit": 10, "jobRunCreditsPerForum": 1 },
+  "transactions": [
+    { "id": "...", "delta": -4, "balanceAfter": 94, "reason": "search", "details": { "productId": "...", "forums": ["reddit", "hackernews"], "threads": 15 }, "createdAt": "..." },
+    { "id": "...", "delta": 100, "balanceAfter": 100, "reason": "signup_grant", "details": null, "createdAt": "..." }
+  ],
+  "count": 2, "total": 2, "limit": 20, "offset": 0
+}
+```
+
+`reason` is `signup_grant`, `search`, `job_run`, or `refund`.
+
+**How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend is a single conditional update, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
 
 ## How search works
 
@@ -280,7 +317,7 @@ The job's runs, newest first, with `limit` (default 30, max 365) and `offset`:
 }
 ```
 
-`foundCount` is what the search returned at any score, `leadCount` how many were at or above `minScore` (all stored), and `newLeadCount` how many of those were not already stored under the product (what the email contains). `emailStatus` is `sent`, `skipped` (nothing new), `failed` (see `emailError`), or `not_configured`. A run whose search failed has `status: "error"` with the message and HTTP status; the job stays active and tries again the next day.
+Each run also has `creditsSpent`, what it cost after refunds. `foundCount` is what the search returned at any score, `leadCount` how many were at or above `minScore` (all stored), and `newLeadCount` how many of those were not already stored under the product (what the email contains). `emailStatus` is `sent`, `skipped` (nothing new), `failed` (see `emailError`), or `not_configured`. A run whose search failed, or that the owner had too few credits for, has `status: "error"` with the message and HTTP status (402 for credits); the job stays active and tries again the next day.
 
 **What each run searches.** The trailing week, `SEARCH_JOBS_LOOKBACK_DAYS` (7 by default), not just the day since the last run. Perplexity's search index trails the forums by about two days: a search run on a given day finds posts up to two days old and nothing newer, so searching only yesterday and today comes back empty almost every time. A week-wide window picks up a post once it becomes searchable, and costs the same, since each run is still one Perplexity call per forum. The overlap between runs is harmless: a thread is stored once per product, so a repeat find refreshes the row rather than duplicating it, and only leads not already stored go in the email. If runs were missed for longer than the lookback, because the server was down or searches kept failing, the next run reaches back to the last day a successful run covered, so no day is skipped. A six-forum job costs six calls a day.
 

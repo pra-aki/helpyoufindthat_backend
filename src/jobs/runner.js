@@ -3,6 +3,7 @@ import { getForum } from '../forums/index.js';
 import { isoDay } from '../validation.js';
 import { searchThreads } from '../services/perplexity.js';
 import { leadsEmail } from './email.js';
+import { jobRunCost } from '../services/credits.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const utcDay = (date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -47,9 +48,9 @@ export const searchWindow = (job, { now, maxDays, lookbackDays }) => {
 };
 
 /**
- * Runs due search jobs. Each run searches the job's forums for the last day, stores the
- * threads scoring at least the job's min_score under the product, emails the user the ones
- * not stored before, and records the run.
+ * Runs due search jobs. Each run pays for itself from the owner's credits, searches the job's
+ * forums over the trailing week, stores the threads scoring at least the job's min_score under the
+ * product, emails the user the ones not stored before, and records the run.
  *
  * Everything is written with the service-role key, since the user is not signed in when
  * their job runs. Without that key the runner does nothing and says so once.
@@ -61,11 +62,12 @@ export const searchWindow = (job, { now, maxDays, lookbackDays }) => {
  * @param {object} deps.results     results service; leads are stored like any other search
  * @param {object} deps.searchLog   search log; job searches are logged like interactive ones
  * @param {object} deps.mailer      mailer (src/services/mailer.js)
+ * @param {object} deps.credits     credits service; each run is paid for from the job owner's credits
  * @param {Function} [deps.search]  thread search, injectable for tests
  * @param {object} [deps.logger]
  * @param {Function} [deps.now]     clock, injectable for tests
  */
-export function createJobRunner({ config, db, jobs, results, searchLog, mailer, search = searchThreads, logger = console, now = () => new Date() }) {
+export function createJobRunner({ config, db, jobs, results, searchLog, mailer, credits, search = searchThreads, logger = console, now = () => new Date() }) {
   const serviceToken = config.supabase.serviceRoleKey;
   let warned = false;
   let running = false;
@@ -82,10 +84,30 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
     const { from, to } = searchWindow(job, { now: ranAt, maxDays: config.limits.maxDays, lookbackDays: config.jobs.lookbackDays });
     const base = { jobId: job.id, userId: job.userId, productId: job.productId, ranAt, from: isoDay(from), to: isoDay(to) };
     let outcome;
+    let creditsSpent = 0;
+    // A refund that fails is logged, not allowed to fail the run's record.
+    const refund = async (amount, details) => {
+      try {
+        await credits.refund(job.userId, amount, { refundFor: 'job_run', jobId: job.id, ...details });
+        creditsSpent -= amount;
+      } catch (err) {
+        logger.error(`job ${job.id}: credit refund of ${amount} failed:`, err?.message ?? err);
+      }
+    };
     try {
       const product = await db.selectOne(serviceToken, 'products', { select: '*', id: `eq.${job.productId}` });
       const forums = job.forums.map((id) => getForum(id)).filter(Boolean);
       if (forums.length === 0) throw new HttpError(400, 'Job has no supported forums', { forums: job.forums });
+
+      // One credit per forum for each day the job runs, paid before searching. Without enough, the
+      // run is recorded as an error and nothing is searched; the job stays active and tries again
+      // tomorrow, and because the run did not succeed, that search reaches back over today.
+      const cost = jobRunCost({ forumCount: forums.length });
+      const charged = await credits.spend(job.userId, cost, 'job_run', { jobId: job.id, productId: job.productId, forums: forums.map((f) => f.id), from: base.from, to: base.to });
+      if (!charged.charged) {
+        throw new HttpError(402, `Not enough credits: this run costs ${cost} and the account has ${charged.balance}`, { cost, balance: charged.balance });
+      }
+      creditsSpent = cost;
 
       const logEntry = { productId: job.productId, userId: job.userId, forums: forums.map((f) => f.id), threadsRequested: job.threads, from: base.from, to: base.to };
       let found;
@@ -93,9 +115,14 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
         found = await search({ productDescription: product.description, forums, threads: job.threads, from, to, config });
       } catch (err) {
         await searchLog.record(serviceToken, { ...logEntry, status: 'error', error: err?.message, errorStatus: err?.status, diagnostics: err?.diagnostics });
+        await refund(cost, { reason: 'search failed' });
         throw err;
       }
       await searchLog.record(serviceToken, { ...logEntry, status: 'ok', returnedCount: found.threads.length, diagnostics: found.diagnostics });
+
+      // A forum whose call failed returned nothing, so its credit is given back.
+      const failedForums = (found.meta?.failedForums ?? []).map((f) => f.forum);
+      if (failedForums.length > 0) await refund(failedForums.length, { reason: 'forum failed', forums: failedForums });
 
       const leads = found.threads.filter((t) => Number(t.relevanceScore) >= job.minScore);
       const stored = await results.save(serviceToken, job.productId, leads, { searchDate: ranAt });
@@ -118,10 +145,10 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
           }
         }
       }
-      outcome = { ...base, status: 'ok', foundCount: found.threads.length, leadCount: leads.length, newLeadCount: newLeads.length, emailStatus, emailError, durationMs: now() - ranAt };
+      outcome = { ...base, status: 'ok', foundCount: found.threads.length, leadCount: leads.length, newLeadCount: newLeads.length, emailStatus, emailError, creditsSpent, durationMs: now() - ranAt };
     } catch (err) {
       logger.error(`job ${job.id}: run failed:`, err?.message ?? err);
-      outcome = { ...base, status: 'error', error: err?.message ?? String(err), errorStatus: Number.isInteger(err?.status) ? err.status : null, durationMs: now() - ranAt };
+      outcome = { ...base, status: 'error', error: err?.message ?? String(err), errorStatus: Number.isInteger(err?.status) ? err.status : null, creditsSpent, durationMs: now() - ranAt };
     }
 
     // The claim already moved next_run_at forward; the job is done when that lands past its end date.

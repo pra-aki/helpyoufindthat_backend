@@ -7,6 +7,9 @@ import { parseResultsQuery } from '../src/validation.js';
 import { createSupabaseRest } from '../src/services/supabaseRest.js';
 import { createResultsService } from '../src/services/results.js';
 
+// Searches are paid for from credits; these tests are about other things, so credits never run out.
+const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100, balance: async () => 100, history: async () => ({ transactions: [], total: 0 }) };
+
 // ---------- validation ----------
 
 test('parseResultsQuery defaults and coercion', () => {
@@ -122,7 +125,7 @@ const fakeResults = {
   list: async (token, productId, page) => ({ results: saved.slice(page.offset, page.offset + page.limit), total: saved.length }),
 };
 let server; let base;
-before(async () => { server = createApp({ searchLog: { record: async () => true },  config, verify: fakeVerify, search: fakeSearch, products: fakeProducts, results: fakeResults }).listen(0); await new Promise((r) => server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
+before(async () => { server = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config, verify: fakeVerify, search: fakeSearch, products: fakeProducts, results: fakeResults }).listen(0); await new Promise((r) => server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
 after(() => server.close());
 const auth = { authorization: 'Bearer good' };
 const post = (body) => fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });

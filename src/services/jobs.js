@@ -27,6 +27,8 @@ export const jobToApi = (row) =>
     lastStatus: row.last_status ?? null,
     lastError: row.last_error ?? null,
     runCount: row.run_count ?? 0,
+    // One credit per forum each day the job runs.
+    creditsPerRun: Array.isArray(row.forums) ? row.forums.length : 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -44,6 +46,7 @@ export const runToApi = (row) =>
     newLeadCount: row.new_lead_count ?? null,
     emailStatus: row.email_status ?? null,
     emailError: row.email_error ?? null,
+    creditsSpent: row.credits_spent ?? null,
     error: row.error ?? null,
     errorStatus: row.error_status ?? null,
     durationMs: row.duration_ms ?? null,
@@ -178,6 +181,7 @@ export function createJobsService(db) {
         new_lead_count: run.newLeadCount ?? null,
         email_status: run.emailStatus ?? null,
         email_error: run.emailError ?? null,
+        credits_spent: run.creditsSpent ?? null,
         error: run.error ?? null,
         error_status: run.errorStatus ?? null,
         duration_ms: run.durationMs ?? null,

@@ -5,7 +5,7 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { HttpError } from '../src/errors.js';
 import { parseJobRequest, parseJobsQuery, parseEmail } from '../src/validation.js';
-import { createJobsService } from '../src/services/jobs.js';
+import { createJobsService, jobToApi } from '../src/services/jobs.js';
 import { createSupabaseRest } from '../src/services/supabaseRest.js';
 import { createMailer } from '../src/services/mailer.js';
 import { createJobRunner, nextRunAtHour, msUntilHour, searchWindow } from '../src/jobs/runner.js';
@@ -143,7 +143,8 @@ test('searchWindow covers the trailing week, or further back to the last success
 const thread = (url, relevanceScore, over = {}) => ({ title: `T ${relevanceScore}`, url, asksFor: 'help', summary: 's', whyRelevant: 'w', postedAt: '2026-09-16', relevanceScore, source: 'reddit', ...over });
 
 /** In-memory jobs table plus fakes for everything the runner touches. */
-const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now }) => {
+const unlimitedCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100 };
+const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits }) => {
   const jobs = new Map(rows.map((r) => [r.id, { ...r }]));
   const calls = { search: [], saved: [], logged: [], emails: [], runs: [], products: [] };
   const db = {
@@ -165,7 +166,7 @@ const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now }
   };
   const searchLog = { record: async (token, entry) => { calls.logged.push([token, entry]); return true; } };
   const mailer = { configured: Boolean(sendImpl), send: async (msg) => { calls.emails.push(msg); return sendImpl(msg); } };
-  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: () => {}, warn: () => {} }, now: () => clock });
+  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: () => {}, warn: () => {} }, now: () => clock });
   return { runner, jobs, calls };
 };
 
@@ -421,4 +422,48 @@ test('a new-format secret key goes in the apikey header only; other tokens go as
     assert.equal(h.apikey, 'anon');
     assert.match(h.Authorization, /^Bearer /);
   }
+});
+
+// ---------- credits ----------
+
+test('a run is paid for from the owner\'s credits, one per forum, and records what it cost', async () => {
+  const spent = [];
+  const credits = { spend: async (...a) => { spent.push(a); return { charged: true, balance: 98 }; }, refund: async () => { throw new Error('no refund expected'); } };
+  const { runner, calls } = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews'] })], searchImpl: async () => ({ threads: [], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), credits });
+  const [o] = await runner.runDueJobs();
+  assert.deepEqual([o.status, o.creditsSpent], ['ok', 2]);
+  assert.deepEqual(spent[0].slice(0, 3), ['u1', 2, 'job_run'], 'charged to the job owner');
+  assert.deepEqual(spent[0][3], { jobId: 'j1', productId: PID, forums: ['reddit', 'hackernews'], from: '2026-09-10', to: '2026-09-17' });
+  assert.equal(calls.runs[0][1].credits_spent, 2);
+});
+
+test('without enough credits nothing is searched, the run is an error, and the job tries again tomorrow', async () => {
+  const credits = { spend: async () => ({ charged: false, balance: 1 }), refund: async () => { throw new Error('no refund expected'); } };
+  const { runner, jobs, calls } = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews'], last_date_to: '2026-09-15' })], searchImpl: async () => { throw new Error('should not search'); }, sendImpl: async () => ({}), credits });
+  const [o] = await runner.runDueJobs();
+  assert.deepEqual([o.status, o.errorStatus, o.creditsSpent], ['error', 402, 0]);
+  assert.match(o.error, /Not enough credits: this run costs 2 and the account has 1/);
+  assert.equal(calls.search.length, 0);
+  const j = jobs.get('j1');
+  assert.deepEqual([j.status, j.last_status, j.last_date_to, j.next_run_at], ['active', 'error', '2026-09-15', '2026-09-18T03:00:00.000Z'], 'still active, and the missed day is searched next time');
+  assert.equal(calls.runs[0][1].credits_spent, 0);
+});
+
+test('a failed search is refunded in full, and a failed forum its one credit', async () => {
+  const refunds = [];
+  const credits = { spend: async () => ({ charged: true, balance: 97 }), refund: async (userId, amount, details) => { refunds.push([userId, amount, details.reason]); return 100; } };
+  const failing = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews', 'x'] })], searchImpl: async () => { throw new HttpError(502, 'Perplexity down'); }, sendImpl: async () => ({}), credits });
+  const [a] = await failing.runner.runDueJobs();
+  assert.deepEqual([a.status, a.creditsSpent], ['error', 0]);
+  assert.deepEqual(refunds, [['u1', 3, 'search failed']]);
+
+  refunds.length = 0;
+  const partial = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews', 'x'] })], searchImpl: async () => ({ threads: [], meta: { failedForums: [{ forum: 'x' }] }, diagnostics: {} }), sendImpl: async () => ({}), credits });
+  const [b] = await partial.runner.runDueJobs();
+  assert.deepEqual([b.status, b.creditsSpent], ['ok', 2]);
+  assert.deepEqual(refunds, [['u1', 1, 'forum failed']]);
+});
+
+test('jobs say what each run costs', () => {
+  assert.equal(jobToApi(jobRow({ forums: ['reddit', 'x', 'quora'] })).creditsPerRun, 3);
 });

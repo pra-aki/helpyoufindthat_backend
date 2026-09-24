@@ -4,6 +4,9 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { HttpError } from '../src/errors.js';
 
+// Searches are paid for from credits; these tests are about other things, so credits never run out.
+const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100, balance: async () => 100, history: async () => ({ transactions: [], total: 0 }) };
+
 const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'test-key', SUPABASE_URL: 'https://abc.supabase.co', RATE_LIMIT_PER_MINUTE: '3', CORS_ORIGINS: 'https://app.example.com' });
 let server;
 let base;
@@ -29,7 +32,7 @@ const post = (body, headers = {}) =>
   fetch(`${base}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
 before(async () => {
-  server = createApp({ searchLog: { record: async () => true },  config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  server = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -79,7 +82,7 @@ test('POST /api/threads with a valid token searches the product description, sto
 
 test('POST /api/threads counts a lead already stored under the product as existing', async () => {
   const alreadyStored = { ...fakeResults, save: async (token, productId, threads) => threads.map((t, i) => ({ id: `r${i}`, link: t.url, isNew: false })) };
-  const fresh = createApp({ searchLog: { record: async () => true }, config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: alreadyStored }).listen(0);
+  const fresh = createApp({ credits: freeCredits, searchLog: { record: async () => true }, config, search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: alreadyStored }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   try {
     const res = await fetch(`http://127.0.0.1:${fresh.address().port}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: 'reddit' }) });
@@ -101,7 +104,7 @@ test('GET /api/threads accepts query-string parameters including x and y', async
 });
 
 test('GET /api/threads accepts an explicit from/to range', async () => {
-  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const qs = new URLSearchParams({ productId: PID, forum: 'reddit', from: '2026-01-01', to: '2026-01-31' });
   const res = await fetch(`http://127.0.0.1:${fresh.address().port}/api/threads?${qs}`, { headers: auth });
@@ -112,7 +115,7 @@ test('GET /api/threads accepts an explicit from/to range', async () => {
 });
 
 test('forum accepts a JSON array in POST and a comma list in GET', async () => {
-  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const b = `http://127.0.0.1:${fresh.address().port}`;
   const postRes = await fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: ['reddit', 'x'] }) });
@@ -133,7 +136,7 @@ test('rate limit kicks in per user after the configured number of requests', asy
 });
 
 test('validation errors come back as 400 JSON (auth runs first, so use a fresh limiter)', async () => {
-  const fresh = createApp({ searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
+  const fresh = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const b = `http://127.0.0.1:${fresh.address().port}`;
   const send = (body) => fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });

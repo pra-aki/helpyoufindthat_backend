@@ -75,6 +75,9 @@ export function createSupabaseRest(supabaseConfig, { fetchImpl = fetch } = {}) {
 
     select: async (token, table, query) => (await request({ token, table, query })).data ?? [],
 
+    /** Calls a database function, e.g. rpc(token, 'spend_credits', { p_user: '...' }). Returns what it returns. */
+    rpc: async (token, fn, args = {}) => (await request({ token, method: 'POST', table: `rpc/${fn}`, body: args })).data,
+
     selectOne: async (token, table, query) => (await request({ token, table, query, single: true })).data,
 
     /** Deletes rows matching `query`. Returns the deleted rows (so callers can count them). */

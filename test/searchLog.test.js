@@ -7,6 +7,9 @@ import { getForum } from '../src/forums/index.js';
 import { analyzeThreadsResponse, parseThreadsResponse, searchThreads } from '../src/services/perplexity.js';
 import { createSearchLogService, toSearchRequestRow } from '../src/services/searchLog.js';
 
+// Searches are paid for from credits; these tests are about other things, so credits never run out.
+const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100, balance: async () => 100, history: async () => ({ transactions: [], total: 0 }) };
+
 const reddit = getForum('reddit');
 const hn = getForum('hackernews');
 const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -141,7 +144,7 @@ let searchImpl;
 const listen = async (app) => { const s = app.listen(0); await new Promise((r) => s.once('listening', r)); return s; };
 let server;
 let base;
-before(async () => { server = await listen(createApp({ config, verify: fakeVerify, products: fakeProducts, results: fakeResults, search: (a) => searchImpl(a), searchLog: fakeLog })); base = `http://127.0.0.1:${server.address().port}`; });
+before(async () => { server = await listen(createApp({ credits: freeCredits, config, verify: fakeVerify, products: fakeProducts, results: fakeResults, search: (a) => searchImpl(a), searchLog: fakeLog })); base = `http://127.0.0.1:${server.address().port}`; });
 after(() => server.close());
 const post = (b, body) => fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer good' }, body: JSON.stringify(body) });
 
@@ -177,7 +180,7 @@ test('requests rejected before the search, such as an unknown product or bad inp
 
 test('a log write failure does not affect the search response', async () => {
   const failingLog = createSearchLogService({ insert: async () => { throw new Error('db down'); } }, { logger: { error: () => {} } });
-  const s = await listen(createApp({ config, verify: fakeVerify, products: fakeProducts, results: fakeResults, search: async () => ({ threads: [], meta: {}, diagnostics: {} }), searchLog: failingLog }));
+  const s = await listen(createApp({ credits: freeCredits, config, verify: fakeVerify, products: fakeProducts, results: fakeResults, search: async () => ({ threads: [], meta: {}, diagnostics: {} }), searchLog: failingLog }));
   const res = await post(`http://127.0.0.1:${s.address().port}`, { productId: PID, forum: 'reddit' });
   assert.equal(res.status, 200);
   s.close();
