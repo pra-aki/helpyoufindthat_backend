@@ -282,7 +282,7 @@ The job's runs, newest first, with `limit` (default 30, max 365) and `offset`:
 
 `foundCount` is what the search returned at any score, `leadCount` how many were at or above `minScore` (all stored), and `newLeadCount` how many of those were not already stored under the product (what the email contains). `emailStatus` is `sent`, `skipped` (nothing new), `failed` (see `emailError`), or `not_configured`. A run whose search failed has `status: "error"` with the message and HTTP status; the job stays active and tries again the next day.
 
-**What each run searches.** Normally the last two UTC days (yesterday and today), like `days: 1` on `/api/threads`. If a day was missed, because the server was down or the previous search failed, the next run starts from the last day a successful run covered, so no day is skipped. The overlap is harmless: a thread is stored once per product, so a repeat find refreshes the row rather than duplicating it, and it is not emailed again. Each run costs one Perplexity call per forum, so a six-forum job costs six calls a day.
+**What each run searches.** The trailing week, `SEARCH_JOBS_LOOKBACK_DAYS` (7 by default), not just the day since the last run. Perplexity's search index trails the forums by about two days: a search run on a given day finds posts up to two days old and nothing newer, so searching only yesterday and today comes back empty almost every time. A week-wide window picks up a post once it becomes searchable, and costs the same, since each run is still one Perplexity call per forum. The overlap between runs is harmless: a thread is stored once per product, so a repeat find refreshes the row rather than duplicating it, and only leads not already stored go in the email. If runs were missed for longer than the lookback, because the server was down or searches kept failing, the next run reaches back to the last day a successful run covered, so no day is skipped. A six-forum job costs six calls a day.
 
 **The email.** One message per run with at least one new lead, listing each thread's title, link, forum, score, what the author asks for, and the summary. It is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `EMAIL_FROM` (an address on a domain verified in Resend). Without them, jobs still run and store leads, and the run records `emailStatus: "not_configured"`.
 
@@ -342,6 +342,7 @@ limit 5;
 | `RESEND_API_KEY` | | required for job emails |
 | `EMAIL_FROM` | | sender for job emails, on a domain verified in Resend |
 | `SEARCH_JOBS_RUN_AT_HOUR` | `3` | UTC hour of the daily run, 0 to 23 |
+| `SEARCH_JOBS_LOOKBACK_DAYS` | `7` | days each run searches back; must exceed Perplexity's indexing lag of about two days |
 | `SEARCH_JOBS_ENABLED` | `true` | `false` stops the server running jobs itself |
 | `SEARCH_JOBS_MAX_ACTIVE_PER_USER` | `5` | |
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |

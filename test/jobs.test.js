@@ -131,15 +131,13 @@ test('nextRunAtHour books the next daily slot, today if it is still ahead', () =
   assert.equal(msUntilHour(3, new Date('2026-09-17T02:00:00Z')), 60 * 60 * 1000);
 });
 
-
-test('searchWindow covers yesterday and today, or everything since the last successful run', () => {
+test('searchWindow covers the trailing week, or further back to the last successful run after a long gap', () => {
   const day = (d) => d.toISOString().slice(0, 10);
-  const w1 = searchWindow({ lastDateTo: null }, { now, maxDays: 92 });
-  assert.deepEqual([day(w1.from), day(w1.to)], ['2026-09-16', '2026-09-17']);
-  const w2 = searchWindow({ lastDateTo: '2026-09-10' }, { now, maxDays: 92 });
-  assert.deepEqual([day(w2.from), day(w2.to)], ['2026-09-10', '2026-09-17']);
-  const w3 = searchWindow({ lastDateTo: '2026-01-01' }, { now, maxDays: 92 });
-  assert.deepEqual([day(w3.from), day(w3.to)], ['2026-06-17', '2026-09-17'], 'capped at the maximum search range');
+  const w = (lastDateTo) => { const r = searchWindow({ lastDateTo }, { now, maxDays: 92, lookbackDays: 7 }); return [day(r.from), day(r.to)]; };
+  assert.deepEqual(w(null), ['2026-09-10', '2026-09-17'], 'a first run looks back a week, past the index lag');
+  assert.deepEqual(w('2026-09-16'), ['2026-09-10', '2026-09-17'], 'a recent run does not shrink the window');
+  assert.deepEqual(w('2026-09-01'), ['2026-09-01', '2026-09-17'], 'after a long gap it reaches back to the last day covered');
+  assert.deepEqual(w('2026-01-01'), ['2026-06-17', '2026-09-17'], 'capped at the maximum search range');
 });
 
 const thread = (url, relevanceScore, over = {}) => ({ title: `T ${relevanceScore}`, url, asksFor: 'help', summary: 's', whyRelevant: 'w', postedAt: '2026-09-16', relevanceScore, source: 'reddit', ...over });
@@ -181,10 +179,10 @@ test('a due job searches the last day as the service role, stores only leads at 
   const outcomes = await runner.runDueJobs();
   assert.equal(outcomes.length, 1);
   const o = outcomes[0];
-  assert.deepEqual([o.status, o.from, o.to, o.foundCount, o.leadCount, o.newLeadCount, o.emailStatus, o.completed], ['ok', '2026-09-16', '2026-09-17', 4, 3, 2, 'sent', false]);
+  assert.deepEqual([o.status, o.from, o.to, o.foundCount, o.leadCount, o.newLeadCount, o.emailStatus, o.completed], ['ok', '2026-09-10', '2026-09-17', 4, 3, 2, 'sent', false]);
 
   const search = calls.search[0];
-  assert.deepEqual([search.productDescription, search.forums.map((f) => f.id), search.threads, search.from.toISOString(), search.to.toISOString()], ['Reminds owners to follow up', ['reddit'], 10, '2026-09-16T00:00:00.000Z', '2026-09-17T00:00:00.000Z']);
+  assert.deepEqual([search.productDescription, search.forums.map((f) => f.id), search.threads, search.from.toISOString(), search.to.toISOString()], ['Reminds owners to follow up', ['reddit'], 10, '2026-09-10T00:00:00.000Z', '2026-09-17T00:00:00.000Z']);
   assert.deepEqual(calls.products[0], ['service', { select: '*', id: `eq.${PID}` }], 'the product is read with the service key');
   assert.deepEqual(calls.saved, [['service', PID, ['https://www.reddit.com/r/a/comments/k1/x/', 'https://www.reddit.com/r/a/comments/k2/x/', 'https://www.reddit.com/r/a/comments/k4/x/']]], 'the 0.79 thread is not stored');
   assert.deepEqual([calls.logged[0][0], calls.logged[0][1].status, calls.logged[0][1].userId, calls.logged[0][1].returnedCount], ['service', 'ok', 'u1', 4]);
@@ -200,7 +198,7 @@ test('a due job searches the last day as the service role, stores only leads at 
   assert.deepEqual([j.status, j.next_run_at, j.last_run_at, j.last_date_to, j.last_status, j.run_count], ['active', '2026-09-18T03:00:00.000Z', now.toISOString(), '2026-09-17', 'ok', 1], 'the next run snaps to the daily 03:00 slot');
   const [token, run] = calls.runs[0];
   assert.equal(token, 'service');
-  assert.deepEqual([run.job_id, run.user_id, run.product_id, run.date_from, run.date_to, run.status, run.found_count, run.lead_count, run.new_lead_count, run.email_status], ['j1', 'u1', PID, '2026-09-16', '2026-09-17', 'ok', 4, 3, 2, 'sent']);
+  assert.deepEqual([run.job_id, run.user_id, run.product_id, run.date_from, run.date_to, run.status, run.found_count, run.lead_count, run.new_lead_count, run.email_status], ['j1', 'u1', PID, '2026-09-10', '2026-09-17', 'ok', 4, 3, 2, 'sent']);
 
   assert.deepEqual(await runner.runDueJobs(), [], 'nothing is due until tomorrow');
 });
@@ -220,15 +218,15 @@ test('the last run on the end date completes the job', async () => {
 
 test('a failed search is recorded on the job and the run; the next run picks up where the last good one ended', async () => {
   const { runner, jobs, calls } = harness({
-    rows: [jobRow({ last_date_to: '2026-09-15' })],
+    rows: [jobRow({ last_date_to: '2026-09-05' })],
     searchImpl: async () => { const e = new HttpError(429, 'Perplexity rate limit'); throw e; },
     sendImpl: async () => ({}),
   });
   const [o] = await runner.runDueJobs();
-  assert.deepEqual([o.status, o.error, o.errorStatus, o.from, o.to], ['error', 'Perplexity rate limit', 429, '2026-09-15', '2026-09-17']);
+  assert.deepEqual([o.status, o.error, o.errorStatus, o.from, o.to], ['error', 'Perplexity rate limit', 429, '2026-09-05', '2026-09-17']);
   assert.deepEqual([calls.logged[0][1].status, calls.logged[0][1].error], ['error', 'Perplexity rate limit']);
   const j = jobs.get('j1');
-  assert.deepEqual([j.status, j.last_status, j.last_error, j.last_date_to, j.run_count, j.next_run_at], ['active', 'error', 'Perplexity rate limit', '2026-09-15', 1, '2026-09-18T03:00:00.000Z']);
+  assert.deepEqual([j.status, j.last_status, j.last_error, j.last_date_to, j.run_count, j.next_run_at], ['active', 'error', 'Perplexity rate limit', '2026-09-05', 1, '2026-09-18T03:00:00.000Z']);
   assert.equal(calls.runs[0][1].status, 'error');
 });
 

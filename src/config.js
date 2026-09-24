@@ -63,6 +63,10 @@ export function loadConfig(env = process.env) {
       // Jobs run daily at this UTC hour, so a user knows when the email arrives and the searches
       // land off-peak. 0 to 23.
       runAtHour: hour(env.SEARCH_JOBS_RUN_AT_HOUR, 3),
+      // Each run searches this many trailing days. Perplexity's index trails the forums by about two
+      // days, so a run must look back past that to find anything; the overlap costs nothing extra,
+      // since already-stored leads are neither duplicated nor emailed again.
+      lookbackDays: Math.min(num(env.SEARCH_JOBS_LOOKBACK_DAYS, 7), 92),
       // The runner is on unless explicitly disabled, for deployments that trigger `npm run jobs`
       // from an external scheduler instead.
       enabled: env.SEARCH_JOBS_ENABLED !== 'false',

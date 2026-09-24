@@ -24,17 +24,25 @@ export const msUntilHour = (hour, now) => nextRunAtHour(hour, now).getTime() - n
 
 
 /**
- * The days a run searches. Normally yesterday and today. After a missed day (the server was
- * down, or the search failed) it starts from the last day a successful run covered, so no day is
- * skipped; the overlap is harmless because stored threads are keyed on their link. Capped at the
- * search's maximum range.
+ * The days a run searches: the trailing `lookbackDays`, not just yesterday and today. Perplexity's
+ * index trails the forums by about two days, so a two-day window searches exactly the posts it has
+ * not indexed yet and comes back empty. A week-wide window catches a post once it becomes
+ * searchable, and costs the same, since it is still one call per forum. The overlap between runs is
+ * harmless: stored threads are keyed on their link, and only leads not already stored are emailed.
+ *
+ * After a longer gap than that (the server was down, or searches kept failing) it starts from the
+ * last day a successful run covered instead, so no day is skipped. Capped at the search's maximum
+ * range.
  */
-export const searchWindow = (job, { now, maxDays }) => {
+export const searchWindow = (job, { now, maxDays, lookbackDays }) => {
   const today = utcDay(now);
-  let from = job.lastDateTo ? parseDay(job.lastDateTo) : new Date(today.getTime() - DAY_MS);
+  let from = new Date(today.getTime() - lookbackDays * DAY_MS);
+  if (job.lastDateTo) {
+    const lastCovered = parseDay(job.lastDateTo);
+    if (lastCovered < from) from = lastCovered;
+  }
   const earliest = new Date(today.getTime() - maxDays * DAY_MS);
   if (from < earliest) from = earliest;
-  if (from > today) from = today;
   return { from, to: today };
 };
 
@@ -71,7 +79,7 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
   };
 
   const runJob = async (job, ranAt) => {
-    const { from, to } = searchWindow(job, { now: ranAt, maxDays: config.limits.maxDays });
+    const { from, to } = searchWindow(job, { now: ranAt, maxDays: config.limits.maxDays, lookbackDays: config.jobs.lookbackDays });
     const base = { jobId: job.id, userId: job.userId, productId: job.productId, ranAt, from: isoDay(from), to: isoDay(to) };
     let outcome;
     try {
