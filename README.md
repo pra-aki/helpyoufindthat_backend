@@ -259,7 +259,7 @@ Returns `201` with the job:
 }
 ```
 
-Creating a job searches nothing by itself. Every run, including the first, happens in the daily slot, `SEARCH_JOBS_RUN_AT_HOUR` (03:00 UTC by default). A job created during the day therefore sends nothing until the following morning. `status` is `active`, `completed` (the run on `endDate` has happened), or `cancelled`. A user may have at most `SEARCH_JOBS_MAX_ACTIVE_PER_USER` active jobs (default 5); over that returns 400.
+Creating a job searches nothing by itself. Every run, including the first, happens in the daily slot, `SEARCH_JOBS_RUN_AT_HOUR` (03:00 UTC by default), and a new job's `nextRunAt` is that next slot. A job created during the day therefore sends nothing until the following morning. To see a job run sooner while testing, set `SEARCH_JOBS_RUN_AT_HOUR` to the coming hour, restart, and then create the job. A job created before the change stays booked for the old slot until its first run. `status` is `active`, `completed` (the run on `endDate` has happened), or `cancelled`. A user may have at most `SEARCH_JOBS_MAX_ACTIVE_PER_USER` active jobs (default 5); over that returns 400.
 
 ### `GET /api/jobs`, `GET /api/jobs/:id`, `DELETE /api/jobs/:id`
 

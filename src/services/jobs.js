@@ -55,7 +55,8 @@ export function createJobsService(db) {
 
     /**
      * Schedules a job. Users cannot write search_jobs, so the route passes the service key here,
-     * after checking the product is the caller's; user_id comes from the verified token.
+     * after checking the product is the caller's; user_id comes from the verified token. The route
+     * books nextRunAt into the next daily slot.
      */
     async create(token, user, { productId, email, forums, threads, minScore, startDate, endDate, nextRunAt = new Date() }) {
       const row = await db.insert(token, 'search_jobs', {

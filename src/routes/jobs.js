@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { parseJobRequest, parseJobsQuery, parseRunsQuery, parseUuid, isoDay } from '../validation.js';
 import { HttpError } from '../errors.js';
+import { nextRunAtHour } from '../jobs/runner.js';
 
 const bearer = (req) => (req.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
 
@@ -54,6 +55,9 @@ export function jobsRouter({ config, products, jobs, protect }) {
       minScore: input.minScore,
       startDate: isoDay(input.startDate),
       endDate: isoDay(input.endDate),
+      // Jobs only run in the daily slot, so a new job's first run is the next one. Booking it there
+      // makes nextRunAt the time it will actually run, rather than the moment it was created.
+      nextRunAt: nextRunAtHour(config.jobs.runAtHour, new Date()),
     });
     res.status(201).json({ job });
   });

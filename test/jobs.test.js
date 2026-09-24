@@ -341,6 +341,9 @@ test('POST /api/jobs requires auth, checks the product, and returns 201 with the
 
   const ok = await post({ productId: PID, forum: ['reddit', 'hackernews'], endDate: today, threads: 5 });
   assert.equal(ok.status, 201);
+  const booked = store[0].nextRunAt;
+  assert.equal(booked.toISOString().slice(11), '03:00:00.000Z', 'a new job is booked into the daily 03:00 slot, not at the moment it was created');
+  assert.ok(booked > new Date() && booked - new Date() <= 24 * 60 * 60 * 1000, 'the next slot, within a day');
   const { job } = await ok.json();
   assert.deepEqual([job.productId, job.email, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, 'u@example.com', ['reddit', 'hackernews'], 5, 0.8, today, today, 'active', 'user-1']);
 
