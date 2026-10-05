@@ -4,7 +4,7 @@ import { HttpError } from '../errors.js';
  * Stored search results. One row per (product, link); repeat finds refresh
  * search_date and the score rather than adding rows.
  */
-const toApi = (row) =>
+export const resultToApi = (row) =>
   row && {
     id: row.id,
     productId: row.product_id,
@@ -15,6 +15,8 @@ const toApi = (row) =>
     whyRelevant: row.why_relevant ?? null,
     postedAt: row.posted_at ?? null,
     relevanceScore: row.relevance_score === null || row.relevance_score === undefined ? null : Number(row.relevance_score),
+    // The scheduled job whose run last stored this lead, or null if only manual searches found it.
+    jobId: row.job_id ?? null,
     searchDate: row.search_date,
     respondedAt: row.responded_at ?? null,
     createdAt: row.created_at,
@@ -48,8 +50,12 @@ export function createResultsService(db) {
     /**
      * Upserts the threads from one search under a product. Returns the stored rows in the same
      * order, each with `isNew`: true when this search stored the link for the first time.
+     *
+     * A job's run passes `jobId`, which is stamped on every lead it stores, new or repeat. A manual
+     * search passes none, and since an upsert only writes the columns it is given, it leaves an
+     * existing job_id alone.
      */
-    async save(token, productId, threads, { searchDate = new Date() } = {}) {
+    async save(token, productId, threads, { searchDate = new Date(), jobId } = {}) {
       if (threads.length === 0) return [];
       const seen = new Set();
       const rows = [];
@@ -66,13 +72,14 @@ export function createResultsService(db) {
           posted_at: toTimestamp(t.postedAt),
           relevance_score: Math.round(t.relevanceScore * 1000) / 1000,
           search_date: searchDate.toISOString(),
+          ...(jobId ? { job_id: jobId } : {}),
         });
       }
       // Read before writing: after the upsert every row looks the same, so this is the only
       // moment the difference between a first find and a repeat find exists.
       const before = await this.existingLinks(token, productId, rows.map((r) => r.link));
       const stored = await db.upsert(token, 'search_results', rows, { onConflict: 'product_id,link' });
-      const byLink = new Map(stored.map((r) => [r.link, { ...toApi(r), isNew: !before.has(r.link) }]));
+      const byLink = new Map(stored.map((r) => [r.link, { ...resultToApi(r), isNew: !before.has(r.link) }]));
       return rows.map((r) => byLink.get(r.link)).filter(Boolean);
     },
 
@@ -89,7 +96,7 @@ export function createResultsService(db) {
           { id: `eq.${id}`, product_id: `eq.${productId}` },
           { responded_at: responded ? at.toISOString() : null },
         );
-        return toApi(row);
+        return resultToApi(row);
       } catch (err) {
         if (err instanceof HttpError && err.status === 404) return null;
         throw err;
@@ -115,7 +122,7 @@ export function createResultsService(db) {
         relevance_score: minScore !== undefined ? `gte.${minScore}` : undefined,
       };
       const { rows, total } = await db.selectPage(token, 'search_results', query);
-      return { results: rows.map(toApi), total };
+      return { results: rows.map(resultToApi), total };
     },
   };
 }

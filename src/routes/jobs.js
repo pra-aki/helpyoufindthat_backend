@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { parseJobRequest, parseJobsQuery, parseRunsQuery, parseUuid, isoDay } from '../validation.js';
+import { parseJobRequest, parseJobsQuery, parseRunsQuery, parseResultsQuery, parseUuid, isoDay } from '../validation.js';
 import { HttpError } from '../errors.js';
 import { nextRunAtHour } from '../jobs/runner.js';
 
@@ -37,7 +37,7 @@ export function jobsRouter({ config, products, jobs, protect }) {
     requireServiceKey();
     const token = bearer(req);
 
-    await products.get(token, productId); // 404 if it doesn't exist or isn't the caller's
+    const product = await products.get(token, productId); // 404 if it doesn't exist or isn't the caller's
 
     const email = input.email ?? req.user?.email;
     if (!email) throw new HttpError(400, 'Your account has no email address; pass "email" in the request', { field: 'email' });
@@ -59,7 +59,7 @@ export function jobsRouter({ config, products, jobs, protect }) {
       // makes nextRunAt the time it will actually run, rather than the moment it was created.
       nextRunAt: nextRunAtHour(config.jobs.runAtHour, new Date()),
     });
-    res.status(201).json({ job });
+    res.status(201).json({ job: { ...job, productName: product.name } });
   });
 
   // GET /api/jobs?productId=...&status=active  -> the caller's jobs, newest first
@@ -79,6 +79,17 @@ export function jobsRouter({ config, products, jobs, protect }) {
     const id = parseUuid(req.params.id);
     requireServiceKey();
     res.json({ job: await jobs.cancel(bearer(req), id, { serviceToken, userId: req.user.id }) });
+  });
+
+  // GET /api/jobs/:id/leads?limit=50&offset=0&source=reddit&minScore=0.8
+  //   -> every lead the job has found, latest first, with when and how often it found each
+  router.get('/jobs/:id/leads', ...protect, async (req, res) => {
+    const id = parseUuid(req.params.id);
+    const page = parseResultsQuery(req.query);
+    const token = bearer(req);
+    await jobs.get(token, id); // 404 if it isn't the caller's
+    const { leads, total } = await jobs.leads(token, id, page);
+    res.json({ jobId: id, leads, count: leads.length, total, limit: page.limit, offset: page.offset });
   });
 
   // GET /api/jobs/:id/runs?limit=30&offset=0  -> what each run found and whether the email went out, newest first

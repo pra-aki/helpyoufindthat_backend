@@ -7,6 +7,7 @@ import { HttpError } from '../src/errors.js';
 import { parseJobRequest, parseJobsQuery, parseEmail } from '../src/validation.js';
 import { createJobsService, jobToApi } from '../src/services/jobs.js';
 import { createSupabaseRest } from '../src/services/supabaseRest.js';
+import { createResultsService } from '../src/services/results.js';
 import { createMailer } from '../src/services/mailer.js';
 import { createJobRunner, nextRunAtHour, msUntilHour, searchWindow } from '../src/jobs/runner.js';
 import { leadsEmail } from '../src/jobs/email.js';
@@ -144,7 +145,7 @@ const thread = (url, relevanceScore, over = {}) => ({ title: `T ${relevanceScore
 
 /** In-memory jobs table plus fakes for everything the runner touches. */
 const unlimitedCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100 };
-const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits }) => {
+const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits, logged = [] }) => {
   const jobs = new Map(rows.map((r) => [r.id, { ...r }]));
   const calls = { search: [], saved: [], logged: [], emails: [], runs: [], products: [] };
   const db = {
@@ -159,14 +160,15 @@ const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, 
     insert: async (token, table, row) => { calls.runs.push([token, row]); return { id: 'run1', ...row }; },
   };
   const results = {
-    save: async (token, productId, threads, { searchDate }) => {
+    save: async (token, productId, threads, { searchDate, jobId }) => {
       calls.saved.push([token, productId, threads.map((t) => t.url)]);
+      calls.savedJobIds = [...(calls.savedJobIds ?? []), jobId];
       return threads.map((t, i) => ({ id: `r${i}`, link: t.url, isNew: !existingLinks.includes(t.url) }));
     },
   };
   const searchLog = { record: async (token, entry) => { calls.logged.push([token, entry]); return true; } };
   const mailer = { configured: Boolean(sendImpl), send: async (msg) => { calls.emails.push(msg); return sendImpl(msg); } };
-  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: () => {}, warn: () => {} }, now: () => clock });
+  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: (...a) => logged.push(a.join(' ')), warn: () => {} }, now: () => clock });
   return { runner, jobs, calls };
 };
 
@@ -308,6 +310,7 @@ const fakeVerify = async (token) => {
   throw new HttpError(401, 'Invalid token');
 };
 const fakeProducts = { get: async (token, id) => { if (id !== PID) throw new HttpError(404, 'Not found'); return { id, name: 'FollowUp', description: 'd' }; } };
+const leadQueries = [];
 const store = [];
 const writes = [];
 const fakeJobs = {
@@ -316,6 +319,7 @@ const fakeJobs = {
   get: async (token, id) => { const j = store.find((x) => x.id === id); if (!j) throw new HttpError(404, 'Not found'); return j; },
   countActive: async () => store.filter((j) => j.status === 'active').length,
   cancel: async (token, id, opts) => { writes.push(['cancel', token, opts]); const j = await fakeJobs.get(token, id); if (j.status === 'active') j.status = 'cancelled'; return j; },
+  leads: async (token, jobId, page) => { leadQueries.push([token, jobId, page]); return { leads: [{ id: 'r1', jobId, title: 'T' }], total: 1 }; },
   listRuns: async (token, jobId, { limit, offset }) => ({ runs: [{ id: 'run1', jobId, status: 'ok' }].slice(offset, offset + limit), total: 1 }),
 };
 let server; let base;
@@ -344,6 +348,7 @@ test('POST /api/jobs requires auth, checks the product, and returns 201 with the
   assert.equal(booked.toISOString().slice(11), '03:00:00.000Z', 'a new job is booked into the daily 03:00 slot, not at the moment it was created');
   assert.ok(booked > new Date() && booked - new Date() <= 24 * 60 * 60 * 1000, 'the next slot, within a day');
   const { job } = await ok.json();
+  assert.equal(job.productName, 'FollowUp', 'a new job names its product, which the route already read');
   assert.deepEqual([job.productId, job.email, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, 'u@example.com', ['reddit', 'hackernews'], 5, 0.8, today, today, 'active', 'user-1']);
 
   const custom = await post({ productId: PID, forum: 'x', endDate: today, minScore: 0.9, email: 'other@example.com' });
@@ -466,4 +471,65 @@ test('a failed search is refunded in full, and a failed forum its one credit', a
 
 test('jobs say what each run costs', () => {
   assert.equal(jobToApi(jobRow({ forums: ['reddit', 'x', 'quora'] })).creditsPerRun, 3);
+});
+
+// ---------- leads found by a job ----------
+
+test('a run stamps its job on every lead it stores', async () => {
+  const { runner, calls } = harness({
+    rows: [jobRow()],
+    searchImpl: async () => ({ threads: [thread('https://www.reddit.com/r/a/comments/k1/x/', 0.9), thread('https://www.reddit.com/r/a/comments/k2/x/', 0.85)], meta: {}, diagnostics: {} }),
+    sendImpl: async () => ({}),
+    existingLinks: ['https://www.reddit.com/r/a/comments/k2/x/'],
+  });
+  await runner.runDueJobs();
+  assert.deepEqual(calls.savedJobIds, ['j1'], 'the save that stores this run\'s leads, new and repeat, carries the job');
+});
+
+test('saving stamps job_id only for a job, so a manual search never clears it', async () => {
+  const sent = [];
+  const db = {
+    select: async () => [],
+    upsert: async (token, table, rows) => { sent.push(rows); return rows.map((r, i) => ({ id: `r${i}`, ...r })); },
+  };
+  const results = createResultsService(db);
+  const t = { url: 'https://www.reddit.com/r/a/comments/k1/x/', source: 'reddit', title: 'T', relevanceScore: 0.9 };
+  const [fromJob] = await results.save('service', PID, [t], { searchDate: now, jobId: 'j1' });
+  await results.save('tok', PID, [t], { searchDate: now });
+  assert.equal(sent[0][0].job_id, 'j1');
+  assert.ok(!('job_id' in sent[1][0]), 'a manual search does not send the column, so the upsert leaves it alone');
+  assert.equal(fromJob.jobId, 'j1');
+});
+
+test('jobs service: lists embed the product name, a job\'s leads come from search_results, and cancel keeps the name', async () => {
+  const calls = [];
+  const db = {
+    select: async (token, table, query) => { calls.push(['select', table, query.select]); return [jobRow({ products: { name: 'FollowUp' } })]; },
+    selectOne: async (token, table, query) => { calls.push(['selectOne', table, query.select]); return jobRow({ products: { name: 'FollowUp' } }); },
+    update: async () => jobRow({ status: 'cancelled' }),
+    selectPage: async (token, table, query) => { calls.push(['selectPage', token, table, query]); return { rows: [{ id: 'r1', product_id: PID, job_id: 'j1', source_site: 'reddit', link: 'https://x', title: 'T', relevance_score: '0.900', search_date: 's', created_at: 'c' }], total: 4 }; },
+  };
+  const svc = createJobsService(db);
+  assert.equal((await svc.list('tok'))[0].productName, 'FollowUp');
+  assert.equal((await svc.get('tok', 'j1')).productName, 'FollowUp');
+  assert.deepEqual(calls.slice(0, 2), [['select', 'search_jobs', '*,products(name)'], ['selectOne', 'search_jobs', '*,products(name)']], 'the name is read from products through product_id, not stored on the job');
+  assert.equal((await svc.cancel('tok', 'j1', { serviceToken: 'service', userId: 'u1' })).productName, 'FollowUp', 'the update does not embed the product, so the name is carried over');
+
+  const { leads, total } = await svc.leads('tok', 'j1', { limit: 10, offset: 0, source: 'reddit', minScore: 0.8 });
+  assert.deepEqual(calls.at(-1), ['selectPage', 'tok', 'search_results', { select: '*', job_id: 'eq.j1', order: 'search_date.desc,relevance_score.desc.nullslast,created_at.desc', limit: '10', offset: '0', source_site: 'eq.reddit', relevance_score: 'gte.0.8' }], 'read with the caller token');
+  assert.equal(total, 4);
+  assert.deepEqual([leads[0].id, leads[0].jobId, leads[0].relevanceScore], ['r1', 'j1', 0.9]);
+  assert.equal(jobToApi(jobRow()).productName, null, 'null when the query did not embed the product');
+});
+
+test('GET /api/jobs/:id/leads pages the job\'s leads and 404s for someone else\'s job', async () => {
+  leadQueries.length = 0;
+  const id = store[0].id;
+  const res = await fetch(`${base}/api/jobs/${id}/leads?limit=5&source=reddit&minScore=0.8`, { headers: headers() });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { jobId: id, leads: [{ id: 'r1', jobId: id, title: 'T' }], count: 1, total: 1, limit: 5, offset: 0 });
+  assert.deepEqual(leadQueries[0], ['good', id, { limit: 5, offset: 0, source: 'reddit', minScore: 0.8 }]);
+  assert.equal((await fetch(`${base}/api/jobs/${OTHER}/leads`, { headers: headers() })).status, 404);
+  assert.equal((await fetch(`${base}/api/jobs/${id}/leads?minScore=2`, { headers: headers() })).status, 400);
+  assert.equal((await fetch(`${base}/api/jobs/${id}/leads`)).status, 401);
 });

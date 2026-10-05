@@ -1,4 +1,5 @@
 import { HttpError } from '../errors.js';
+import { resultToApi } from './results.js';
 
 /**
  * Scheduled searches ("jobs") and their run history.
@@ -13,6 +14,8 @@ export const jobToApi = (row) =>
   row && {
     id: row.id,
     productId: row.product_id,
+    // Present when the query embeds the product, so a list of jobs across products can name them.
+    productName: row.products?.name ?? null,
     userId: row.user_id,
     email: row.email,
     forums: row.forums,
@@ -52,6 +55,9 @@ export const runToApi = (row) =>
     durationMs: row.duration_ms ?? null,
   };
 
+// Embeds the product's name in each job, read under the same row-level security.
+const JOB_SELECT = '*,products(name)';
+
 export function createJobsService(db) {
   return {
     // ---------- as the signed-in user ----------
@@ -79,7 +85,7 @@ export function createJobsService(db) {
 
     async list(token, { productId, status } = {}) {
       const rows = await db.select(token, 'search_jobs', {
-        select: '*',
+        select: JOB_SELECT,
         order: 'created_at.desc',
         product_id: productId ? `eq.${productId}` : undefined,
         status: status ? `eq.${status}` : undefined,
@@ -88,7 +94,7 @@ export function createJobsService(db) {
     },
 
     async get(token, id) {
-      return jobToApi(await db.selectOne(token, 'search_jobs', { select: '*', id: `eq.${id}` }));
+      return jobToApi(await db.selectOne(token, 'search_jobs', { select: JOB_SELECT, id: `eq.${id}` }));
     },
 
     /** Number of the caller's active jobs, for the per-user cap. */
@@ -106,7 +112,25 @@ export function createJobsService(db) {
     async cancel(token, id, { serviceToken, userId }) {
       const job = await this.get(token, id);
       if (job.status !== 'active') return job;
-      return jobToApi(await db.update(serviceToken, 'search_jobs', { id: `eq.${id}`, user_id: `eq.${userId}` }, { status: 'cancelled' }));
+      const updated = jobToApi(await db.update(serviceToken, 'search_jobs', { id: `eq.${id}`, user_id: `eq.${userId}` }, { status: 'cancelled' }));
+      return { ...updated, productName: job.productName };
+    },
+
+    /**
+     * Every lead the job's runs stored, read with the caller's token so row-level security applies.
+     * Latest found first, then by score; filters match a product's results.
+     */
+    async leads(token, jobId, { limit, offset, source, minScore }) {
+      const { rows, total } = await db.selectPage(token, 'search_results', {
+        select: '*',
+        job_id: `eq.${jobId}`,
+        order: 'search_date.desc,relevance_score.desc.nullslast,created_at.desc',
+        limit: String(limit),
+        offset: String(offset),
+        source_site: source ? `eq.${source}` : undefined,
+        relevance_score: minScore !== undefined ? `gte.${minScore}` : undefined,
+      });
+      return { leads: rows.map(resultToApi), total };
     },
 
     async listRuns(token, jobId, { limit, offset }) {

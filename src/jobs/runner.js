@@ -125,7 +125,8 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
       if (failedForums.length > 0) await refund(failedForums.length, { reason: 'forum failed', forums: failedForums });
 
       const leads = found.threads.filter((t) => Number(t.relevanceScore) >= job.minScore);
-      const stored = await results.save(serviceToken, job.productId, leads, { searchDate: ranAt });
+      // Stamped with the job, so the job can list the leads it found.
+      const stored = await results.save(serviceToken, job.productId, leads, { searchDate: ranAt, jobId: job.id });
       const newLinks = new Set(stored.filter((r) => r.isNew).map((r) => r.link));
       const newLeads = leads.filter((t) => newLinks.has(t.url));
 

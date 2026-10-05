@@ -199,7 +199,7 @@ Stored search results for one of your products, latest search first, then by rel
 curl -s "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results?limit=100&source=reddit" -H "Authorization: Bearer $TOKEN"
 ```
 
-Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, createdAt } ], count, total, limit, offset }`. `total` is the number of matching rows regardless of paging.
+Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, respondedAt, jobId, createdAt } ], count, total, limit, offset }`. `jobId` is the scheduled job whose run last stored the lead, or null if only manual searches found it. `total` is the number of matching rows regardless of paging.
 
 **How storage works.** A thread is stored once per product, keyed on the link. If a later search returns the same thread again, its row is updated in place: `searchDate` moves to the latest search and the score, title, and summary are refreshed. Nothing is ever duplicated, and no result is excluded from a search because it was seen before. The search itself is stateless; to get different threads, change the product description.
 
@@ -286,7 +286,7 @@ Returns `201` with the job:
 ```json
 {
   "job": {
-    "id": "...", "productId": "...", "userId": "...", "email": "you@example.com",
+    "id": "...", "productId": "...", "productName": "FollowUp", "userId": "...", "email": "you@example.com",
     "forums": ["reddit", "facebook-groups", "quora", "linkedin-groups", "hackernews", "x"],
     "threads": 10, "minScore": 0.8, "startDate": "2026-09-17", "endDate": "2026-10-17",
     "status": "active", "nextRunAt": "2026-09-17T14:02:11.318Z",
@@ -300,7 +300,13 @@ Creating a job searches nothing by itself. Every run, including the first, happe
 
 ### `GET /api/jobs`, `GET /api/jobs/:id`, `DELETE /api/jobs/:id`
 
-List your jobs, newest first, optionally filtered with `?productId=...` and `?status=active|completed|cancelled`; fetch one; or cancel one. A cancelled job stays listed with `status: "cancelled"` and keeps its run history. Deleting the product deletes its jobs.
+List your jobs, newest first, optionally filtered with `?productId=...` and `?status=active|completed|cancelled`; fetch one; or cancel one. Without `productId` the list covers every product, so `GET /api/jobs?status=active` gives all of a user's running jobs. Each job carries `productName`, read from the product through `productId` at query time rather than stored on the job, so a renamed product shows its current name. A cancelled job stays listed with `status: "cancelled"` and keeps its run history. Deleting the product deletes its jobs.
+
+### `GET /api/jobs/:id/leads`
+
+Every lead the job's runs have stored, in the same shape as `GET /api/products/:id/results` and with the same `limit` (default 50, max 1000), `offset`, `source`, and `minScore`. Latest found first, then by score. Returns `{ jobId, leads, count, total, limit, offset }`; someone else's job is 404.
+
+Each run stamps its job on every lead it stores, whether it found the lead first or found it again, in the indexed `search_results.job_id` column. A lead is one row per product, so the column holds one job: if two jobs on the same product find the same thread, it belongs to whichever found it last. Manual searches never set or clear it. Leads stored by runs before the column existed were backfilled where their `searchDate` still matched the run.
 
 ### `GET /api/jobs/:id/runs`
 
