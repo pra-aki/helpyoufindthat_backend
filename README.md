@@ -42,6 +42,22 @@ Each user is limited to `RATE_LIMIT_PER_MINUTE` searches per minute (default 20)
 
 Set `CORS_ORIGINS` to your front end's origin(s) in production. When it's empty any origin is accepted, which is convenient for local development and safe only because the token, not the origin, is what grants access.
 
+### Terms of Service acceptance
+
+The sign-up form only creates an account once the user ticks the Terms and Privacy checkbox, and it sends the version they agreed to as `termsVersion` in the new account's metadata. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) copies the version into `terms_acceptances` with the database's own time in `accepted_at`, and `source` set to `signup`.
+
+The account metadata is not the record, because the user can rewrite it through Supabase Auth and its time comes from the browser's clock. `terms_acceptances` is readable by its owner and writable by no user. The trigger cannot block a sign-up: an account created without a version, such as an anonymous session or one added from the Supabase dashboard, records nothing, and a version that fails validation (over 50 characters) is logged and skipped. Accounts created before the checkbox existed have no acceptance on record.
+
+To find who accepted what and when:
+
+```sql
+select u.email, t.terms_version, t.accepted_at
+from terms_acceptances t join auth.users u on u.id = t.user_id
+order by t.accepted_at desc;
+```
+
+When the Terms change, bump the front end's `TERMS_VERSION`. New sign-ups record the new version; asking existing users to accept it in the app needs an endpoint that does not exist yet.
+
 ## API
 
 ### `GET /api/forums`
