@@ -221,7 +221,7 @@ Returns `{ productId, results: [ { id, productId, source, link, title, summary, 
 
 The backend talks to Supabase's REST endpoint with the caller's own token. This needs `SUPABASE_ANON_KEY` (the publishable key) in the environment. The only privileged key is `SUPABASE_SERVICE_ROLE_KEY`, used for scheduled searches alone.
 
-**Table access.** Access is granted explicitly in the migrations rather than left to Supabase's defaults, which stop applying to new tables on 2026-10-30. The anonymous role gets nothing, since the browser only uses Supabase to sign in. Signed-in users get what each table's row-level security policies allow, except that `search_jobs`, `search_job_runs`, `user_credits`, and `credit_transactions` are read-only. The service role gets everything. A migration that creates a table must grant access to it in the same file, or the backend gets permission denied on it.
+**Table access.** Access is granted explicitly in the migrations rather than left to Supabase's defaults, which stop applying to new tables on 2026-10-30. The anonymous role gets nothing, since the browser only uses Supabase to sign in. Signed-in users get what each table's row-level security policies allow, except that `search_jobs`, `search_job_runs`, `user_credits`, and `credit_transactions` are read-only. The service role gets everything. `error_reports` is the exception in the other direction: users get nothing at all, and only the owner reads it, directly in Supabase. A migration that creates a table must grant access to it in the same file, or the backend gets permission denied on it.
 
 Because signed-in users can write their own rows directly, any limit that protects cost has to be enforced by the database, not only by the backend. Product name, description, website, and general reply carry check constraints matching the backend's validation; the description matters most, since the job runner sends it to Perplexity every day.
 
@@ -258,6 +258,38 @@ The caller's balance, the pricing, and their credit history, newest first, with 
 `reason` is `signup_grant`, `search`, `job_run`, or `refund`.
 
 **How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend is a single conditional update, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
+
+## Error reports
+
+### `POST /api/error-reports`
+
+For the app's Report Error action. Requires the Supabase bearer token.
+
+| Field | Required | Notes |
+|---|---|---|
+| `message` | yes | what the user says happened, up to 2000 characters. Also `description`. |
+| `page` | no | where in the app, up to 500. Also `url`. |
+| `error` | no | the error message the app showed, up to 2000. Also `errorMessage`. |
+| `details` | no | a JSON object with anything else, such as the failing request and its status, up to 8000 characters as JSON. Also `context`. |
+
+```bash
+curl -s https://helpyoufindthat-backend.onrender.com/api/error-reports \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"message":"The job page stays blank","page":"/dashboard/jobs/123","error":"Request failed with HTTP 500"}'
+```
+
+Returns `201` with `{ "report": { "id", "createdAt" } }`. The user comes from the token, never from the body, and the browser from the `User-Agent` header. Each user may send `ERROR_REPORTS_PER_MINUTE` reports a minute (default 5); over that returns 429.
+
+Reports are stored in `error_reports`, which no user can read or write, not even their own reports; the backend stores them with the service key. Read them in the Supabase SQL editor or table view:
+
+```sql
+select r.created_at, u.email, r.page, r.message, r.error, r.details, r.user_agent
+from error_reports r join auth.users u on u.id = r.user_id
+order by r.created_at desc
+limit 50;
+```
+
+Signing in is required, so errors on the sign-in and sign-up pages cannot be reported this way. Deleting an account deletes its reports.
 
 ## How search works
 
@@ -406,6 +438,7 @@ limit 5;
 | `SEARCH_JOBS_MAX_ACTIVE_PER_USER` | `5` | |
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | per user |
+| `ERROR_REPORTS_PER_MINUTE` | `5` | error reports per user per minute |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |
 | `PERPLEXITY_SEARCH_CONTEXT` | `medium` | `low`, `medium`, or `high` |
 | `PERPLEXITY_BASE_URL` | `https://api.perplexity.ai` | override for testing against a mock |

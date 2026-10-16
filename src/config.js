@@ -81,6 +81,7 @@ export function loadConfig(env = process.env) {
     },
     rateLimit: {
       perMinute: num(env.RATE_LIMIT_PER_MINUTE, 20),
+      errorReportsPerMinute: num(env.ERROR_REPORTS_PER_MINUTE, 5),
     },
     defaults: { threads: 10, days: 1 },
     limits: { maxThreads: 50, maxDays: 92, maxDescriptionLength: 2000 }, // 92 days covers any three calendar months

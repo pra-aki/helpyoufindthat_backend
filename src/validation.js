@@ -354,3 +354,34 @@ export function parseRunsQuery(source) {
   const { limit, offset } = parseResultsQuery({ limit: firstDefined(source, ['limit']), offset: firstDefined(source, ['offset']) }, { defaultLimit: 30, maxLimit: 365 });
   return { limit, offset };
 }
+
+const optionalText = (value, { name, max }) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') throw new HttpError(400, `"${name}" must be a string`, { field: name });
+  const text = value.trim();
+  if (text.length > max) throw new HttpError(400, `"${name}" must be at most ${max} characters`, { field: name, max });
+  return text.length ? text : null;
+};
+
+/**
+ * Validates an error report from the front end. Returns { message, page, error, details }.
+ *
+ *   message | description         required, what the user says happened (up to 2000 characters)
+ *   page | url                    optional, where in the app (up to 500)
+ *   error | errorMessage          optional, the error the app showed (up to 2000)
+ *   details | context             optional, a JSON object, up to 8000 characters once serialised
+ */
+export function parseErrorReport(source) {
+  if (!source || typeof source !== 'object') throw new HttpError(400, 'Request body must be a JSON object');
+  const message = requiredText(firstDefined(source, ['message', 'description']), { name: 'message', max: 2000 });
+  const page = optionalText(firstDefined(source, ['page', 'url']), { name: 'page', max: 500 });
+  const error = optionalText(firstDefined(source, ['error', 'errorMessage', 'error_message']), { name: 'error', max: 2000 });
+  const detailsRaw = firstDefined(source, ['details', 'context']);
+  let details = null;
+  if (detailsRaw !== undefined) {
+    if (typeof detailsRaw !== 'object' || Array.isArray(detailsRaw)) throw new HttpError(400, '"details" must be a JSON object', { field: 'details' });
+    if (JSON.stringify(detailsRaw).length > 8000) throw new HttpError(400, '"details" must be at most 8000 characters as JSON', { field: 'details', max: 8000 });
+    details = detailsRaw;
+  }
+  return { message, page, error, details };
+}

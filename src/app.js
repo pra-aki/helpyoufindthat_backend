@@ -5,6 +5,7 @@ import { threadsRouter } from './routes/threads.js';
 import { productsRouter } from './routes/products.js';
 import { jobsRouter } from './routes/jobs.js';
 import { creditsRouter } from './routes/credits.js';
+import { errorReportsRouter } from './routes/errorReports.js';
 import { createSupabaseRest } from './services/supabaseRest.js';
 import { createProductsService } from './services/products.js';
 import { createResultsService } from './services/results.js';
@@ -26,8 +27,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {object} [deps.searchLog]  injectable search log (tests)
  * @param {object} [deps.jobs]       injectable jobs service (tests)
  * @param {object} [deps.credits]    injectable credits service (tests)
+ * @param {object} [deps.db]         injectable Supabase REST client (tests)
  */
-export function createApp({ config, search, verify, products, results, describe, compose, searchLog, jobs, credits } = {}) {
+export function createApp({ config, search, verify, products, results, describe, compose, searchLog, jobs, credits, db: dbOverride } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -43,9 +45,12 @@ export function createApp({ config, search, verify, products, results, describe,
 
   const verifyToken = verify ?? createSupabaseVerifier(config.supabase);
   const limiter = rateLimit({ perMinute: config.rateLimit.perMinute });
+  // Reports are cheap to send and land in a table only the owner reads, so a stuck page or a
+  // script could flood it; five a minute per user is plenty for a person.
+  const reportLimiter = rateLimit({ perMinute: config.rateLimit.errorReportsPerMinute });
   const authenticate = requireUser(verifyToken);
   const protect = [authenticate, limiter];
-  const db = createSupabaseRest(config.supabase);
+  const db = dbOverride ?? createSupabaseRest(config.supabase);
   const productsService = products ?? createProductsService(db);
   const resultsService = results ?? createResultsService(db);
   const searchLogService = searchLog ?? createSearchLogService(db);
@@ -57,6 +62,7 @@ export function createApp({ config, search, verify, products, results, describe,
   app.use('/api', productsRouter({ config, products: productsService, results: resultsService, describe, compose, protect: [authenticate], limited: protect }));
   app.use('/api', jobsRouter({ config, products: productsService, jobs: jobsService, protect: [authenticate] }));
   app.use('/api', creditsRouter({ credits: creditsService, protect: [authenticate] }));
+  app.use('/api', errorReportsRouter({ config, db, protect: [authenticate, reportLimiter] }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });
@@ -70,7 +76,10 @@ export function createApp({ config, search, verify, products, results, describe,
     res.status(status).json({ error: { message, ...(err.details ? { details: err.details } : {}) } });
   });
 
-  app.locals.stop = () => limiter.stop();
+  app.locals.stop = () => {
+    limiter.stop();
+    reportLimiter.stop();
+  };
   // Shared with the job runner (src/server.js) so it stores results the same way the routes do.
   app.locals.services = { db, products: productsService, results: resultsService, searchLog: searchLogService, jobs: jobsService, credits: creditsService };
   return app;
