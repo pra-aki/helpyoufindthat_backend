@@ -22,7 +22,7 @@ export function leadsEmail({ product, job, leads, from, to }) {
     if (lead.summary) textLines.push(`  ${lead.summary}`);
     textLines.push('');
   }
-  textLines.push(`This job runs every day until ${job.endDate}. Cancel it from the app if you no longer want these emails.`);
+  textLines.push(`This job runs every day until ${job.endDate}. To stop these emails, turn off job emails under Email notifications in your profile settings, or cancel the job.`);
 
   const items = leads
     .map(
@@ -40,7 +40,7 @@ export function leadsEmail({ product, job, leads, from, to }) {
 <html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.45;color:#111;max-width:640px;margin:0 auto;padding:24px">
   <p>${escapeHtml(intro)}</p>
   <ol style="padding-left:20px">${items}</ol>
-  <p style="color:#777;font-size:13px">This job runs every day until ${escapeHtml(job.endDate)}. Cancel it from the app if you no longer want these emails.</p>
+  <p style="color:#777;font-size:13px">This job runs every day until ${escapeHtml(job.endDate)}. To stop these emails, turn off job emails under Email notifications in your profile settings, or cancel the job.</p>
 </body></html>`;
 
   return { subject, text: textLines.join('\n'), html };

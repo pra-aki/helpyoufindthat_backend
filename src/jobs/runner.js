@@ -64,11 +64,12 @@ export const searchWindow = (job, { now, maxDays, lookbackDays }) => {
  * @param {object} deps.mailer      mailer (src/services/mailer.js)
  * @param {object} deps.credits     credits service; each run is paid for from the job owner's credits
  * @param {object} deps.accounts    accounts service; new leads go to the owner's current email
+ * @param {object} deps.settings    settings service; an owner who turned job emails off gets none
  * @param {Function} [deps.search]  thread search, injectable for tests
  * @param {object} [deps.logger]
  * @param {Function} [deps.now]     clock, injectable for tests
  */
-export function createJobRunner({ config, db, jobs, results, searchLog, mailer, credits, accounts, search = searchThreads, logger = console, now = () => new Date() }) {
+export function createJobRunner({ config, db, jobs, results, searchLog, mailer, credits, accounts, settings, search = searchThreads, logger = console, now = () => new Date() }) {
   const serviceToken = config.supabase.serviceRoleKey;
   let warned = false;
   let running = false;
@@ -136,6 +137,9 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
       if (newLeads.length > 0) {
         if (!mailer.configured) {
           emailStatus = 'not_configured';
+        } else if (!(await settings.jobLeadEmailsEnabled(serviceToken, job.userId))) {
+          // The job still ran and stored its leads; the owner only asked not to be emailed.
+          emailStatus = 'opted_out';
         } else {
           try {
             // Always the account's own address as it is now, never one stored on the job.

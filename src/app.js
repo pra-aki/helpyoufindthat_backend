@@ -7,6 +7,7 @@ import { jobsRouter } from './routes/jobs.js';
 import { creditsRouter } from './routes/credits.js';
 import { errorReportsRouter } from './routes/errorReports.js';
 import { accountRouter } from './routes/account.js';
+import { settingsRouter } from './routes/settings.js';
 import { createSupabaseRest } from './services/supabaseRest.js';
 import { createProductsService } from './services/products.js';
 import { createResultsService } from './services/results.js';
@@ -14,6 +15,7 @@ import { createSearchLogService } from './services/searchLog.js';
 import { createJobsService } from './services/jobs.js';
 import { createCreditsService } from './services/credits.js';
 import { createAccountsService } from './services/accounts.js';
+import { createSettingsService } from './services/settings.js';
 import { createSupabaseVerifier, requireUser } from './auth/supabase.js';
 import { rateLimit } from './middleware/rateLimit.js';
 
@@ -31,8 +33,9 @@ import { rateLimit } from './middleware/rateLimit.js';
  * @param {object} [deps.credits]    injectable credits service (tests)
  * @param {object} [deps.db]         injectable Supabase REST client (tests)
  * @param {object} [deps.accounts]   injectable accounts service (tests)
+ * @param {object} [deps.settings]   injectable settings service (tests)
  */
-export function createApp({ config, search, verify, products, results, describe, compose, searchLog, jobs, credits, db: dbOverride, accounts } = {}) {
+export function createApp({ config, search, verify, products, results, describe, compose, searchLog, jobs, credits, db: dbOverride, accounts, settings } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render terminates TLS and forwards the client IP
@@ -60,6 +63,7 @@ export function createApp({ config, search, verify, products, results, describe,
   const jobsService = jobs ?? createJobsService(db);
   const creditsService = credits ?? createCreditsService(db, { serviceToken: config.supabase.serviceRoleKey });
   const accountsService = accounts ?? createAccountsService(config.supabase);
+  const settingsService = settings ?? createSettingsService(db);
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/api', threadsRouter({ config, search, products: productsService, results: resultsService, searchLog: searchLogService, credits: creditsService, protect }));
@@ -68,6 +72,7 @@ export function createApp({ config, search, verify, products, results, describe,
   app.use('/api', creditsRouter({ credits: creditsService, protect: [authenticate] }));
   app.use('/api', errorReportsRouter({ config, db, protect: [authenticate, reportLimiter] }));
   app.use('/api', accountRouter({ accounts: accountsService, protect: [authenticate] }));
+  app.use('/api', settingsRouter({ settings: settingsService, protect: [authenticate] }));
 
   app.use((_req, res) => {
     res.status(404).json({ error: { message: 'Not found' } });
@@ -86,6 +91,6 @@ export function createApp({ config, search, verify, products, results, describe,
     reportLimiter.stop();
   };
   // Shared with the job runner (src/server.js) so it stores results the same way the routes do.
-  app.locals.services = { db, products: productsService, results: resultsService, searchLog: searchLogService, jobs: jobsService, credits: creditsService, accounts: accountsService };
+  app.locals.services = { db, products: productsService, results: resultsService, searchLog: searchLogService, jobs: jobsService, credits: creditsService, accounts: accountsService, settings: settingsService };
   return app;
 }

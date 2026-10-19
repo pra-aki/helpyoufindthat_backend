@@ -8,6 +8,7 @@ import { createSearchLogService } from '../services/searchLog.js';
 import { createMailer } from '../services/mailer.js';
 import { createCreditsService } from '../services/credits.js';
 import { createAccountsService } from '../services/accounts.js';
+import { createSettingsService } from '../services/settings.js';
 import { createJobRunner } from './runner.js';
 
 const config = loadConfig();
@@ -25,6 +26,7 @@ const runner = createJobRunner({
   mailer: createMailer(config.email),
   credits: createCreditsService(db, { serviceToken: config.supabase.serviceRoleKey }),
   accounts: createAccountsService(config.supabase),
+  settings: createSettingsService(db),
 });
 const outcomes = await runner.runDueJobs();
 for (const o of outcomes) {

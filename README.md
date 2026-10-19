@@ -259,6 +259,20 @@ The caller's balance, the pricing, and their credit history, newest first, with 
 
 **How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend is a single conditional update, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
 
+## Settings
+
+### `GET /api/settings` and `PATCH /api/settings`
+
+The signed-in user's account settings, for the Email notifications section of the profile page. There is one today:
+
+| Setting | Default | |
+|---|---|---|
+| `jobLeadEmails` | `true` | whether scheduled jobs email new leads. Off stops every job's email; the jobs still run and store leads. |
+
+`GET` returns `{ "settings": { "jobLeadEmails": true } }`. `PATCH` takes the settings to change, such as `{ "jobLeadEmails": false }`, and returns the saved settings. A value that is not a boolean, an unknown setting, or an empty body is refused with 400.
+
+Settings live in `user_settings`, one row per user, written only when they change something; a user with no row has the defaults. Users read and change their own row, acting as themselves, since a preference costs nothing and limits nothing. The job runner reads it with the service key before sending.
+
 ## Deleting an account
 
 ### `DELETE /api/account`
@@ -385,11 +399,11 @@ The job's runs, newest first, with `limit` (default 30, max 365) and `offset`:
 }
 ```
 
-Each run also has `creditsSpent`, what it cost after refunds. `foundCount` is what the search returned at any score, `leadCount` how many were at or above `minScore` (all stored), and `newLeadCount` how many of those were not already stored under the product (what the email contains). `emailStatus` is `sent`, `skipped` (nothing new), `failed` (see `emailError`), or `not_configured`. A run whose search failed, or that the owner had too few credits for, has `status: "error"` with the message and HTTP status (402 for credits); the job stays active and tries again the next day.
+Each run also has `creditsSpent`, what it cost after refunds. `foundCount` is what the search returned at any score, `leadCount` how many were at or above `minScore` (all stored), and `newLeadCount` how many of those were not already stored under the product (what the email contains). `emailStatus` is `sent`, `skipped` (nothing new), `opted_out` (the owner turned job emails off), `failed` (see `emailError`), or `not_configured`. A run whose search failed, or that the owner had too few credits for, has `status: "error"` with the message and HTTP status (402 for credits); the job stays active and tries again the next day.
 
 **What each run searches.** The trailing week, `SEARCH_JOBS_LOOKBACK_DAYS` (7 by default), not just the day since the last run. Perplexity's search index trails the forums by about two days: a search run on a given day finds posts up to two days old and nothing newer, so searching only yesterday and today comes back empty almost every time. A week-wide window picks up a post once it becomes searchable, and costs the same, since each run is still one Perplexity call per forum. The overlap between runs is harmless: a thread is stored once per product, so a repeat find refreshes the row rather than duplicating it, and only leads not already stored go in the email. If runs were missed for longer than the lookback, because the server was down or searches kept failing, the next run reaches back to the last day a successful run covered, so no day is skipped. A six-forum job costs six calls a day.
 
-**The email.** It always goes to the account's own address, looked up when the run sends, so a user who changes their address gets the emails at the new one. A job cannot be given an address: a request with `email` is refused with 400, so a job can never be pointed at someone who did not sign up. An account with no address gets no email, recorded as `emailStatus: "failed"`, and its leads are still stored. One message per run with at least one new lead, listing each thread's title, link, forum, score, what the author asks for, and the summary. It is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `EMAIL_FROM` (an address on a domain verified in Resend). Without them, jobs still run and store leads, and the run records `emailStatus: "not_configured"`.
+**The email.** It always goes to the account's own address, looked up when the run sends, so a user who changes their address gets the emails at the new one. A job cannot be given an address: a request with `email` is refused with 400, so a job can never be pointed at someone who did not sign up. An account with no address gets no email, recorded as `emailStatus: "failed"`, and its leads are still stored. A user who turned job emails off in their [settings](#settings) gets none either, recorded as `opted_out`; their jobs keep running and storing leads. Each email says how to stop them. One message per run with at least one new lead, listing each thread's title, link, forum, score, what the author asks for, and the summary. It is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `EMAIL_FROM` (an address on a domain verified in Resend). Without them, jobs still run and store leads, and the run records `emailStatus: "not_configured"`.
 
 **How it runs.** Jobs belong to users who are not signed in when their job is due, so the runner needs `SUPABASE_SERVICE_ROLE_KEY`, which bypasses row-level security. The same key is used to create and cancel jobs: users can read their own jobs but not write them, because a job has limits and spends Perplexity credit every day, and a user writing the table directly would skip the backend's checks. The route first checks with the caller's own token that the product or job is theirs, then writes with the service key. Every other route acts only with the caller's token. Either a new-format secret key (`sb_secret_...`, preferred, since it can be revoked on its own) or the legacy `service_role` key works. Due jobs run one after another through the same Perplexity queue as interactive searches, so a running job makes a user's own search wait a few seconds longer for its turn. A job is claimed by moving its `nextRunAt` forward in a conditional update, so several instances can run the loop without running a job twice. Each job search is also written to the search log.
 

@@ -148,7 +148,8 @@ const thread = (url, relevanceScore, over = {}) => ({ title: `T ${relevanceScore
 /** In-memory jobs table plus fakes for everything the runner touches. */
 const unlimitedCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100 };
 const accountAt = (address) => ({ lookedUp: [], async getEmail(userId) { this.lookedUp.push(userId); return address; } });
-const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits, logged = [], accounts = accountAt('u@example.com') }) => {
+const emailsOn = (on) => ({ checked: [], async jobLeadEmailsEnabled(token, userId) { this.checked.push([token, userId]); return on; } });
+const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits, logged = [], accounts = accountAt('u@example.com'), settings = emailsOn(true) }) => {
   const jobs = new Map(rows.map((r) => [r.id, { ...r }]));
   const calls = { search: [], saved: [], logged: [], emails: [], runs: [], products: [] };
   const db = {
@@ -171,7 +172,7 @@ const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, 
   };
   const searchLog = { record: async (token, entry) => { calls.logged.push([token, entry]); return true; } };
   const mailer = { configured: Boolean(sendImpl), send: async (msg) => { calls.emails.push(msg); return sendImpl(msg); } };
-  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, accounts, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: (...a) => logged.push(a.join(' ')), warn: () => {} }, now: () => clock });
+  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, accounts, settings, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: (...a) => logged.push(a.join(' ')), warn: () => {} }, now: () => clock });
   return { runner, jobs, calls };
 };
 
@@ -567,4 +568,31 @@ test('no new leads means the account is not even looked up', async () => {
   const { runner } = harness({ rows: [jobRow()], searchImpl: async () => ({ threads: [], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), accounts });
   await runner.runDueJobs();
   assert.deepEqual(accounts.lookedUp, []);
+});
+
+// ---------- opting out of job emails ----------
+
+test('an owner who turned job emails off gets none, but the job still runs and stores its leads', async () => {
+  const settings = emailsOn(false);
+  const accounts = accountAt('u@example.com');
+  const { runner, calls } = harness({ rows: [jobRow()], searchImpl: async () => ({ threads: [thread('https://www.reddit.com/r/a/comments/k1/x/', 0.9)], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), settings, accounts });
+  const [o] = await runner.runDueJobs();
+  assert.deepEqual([o.status, o.newLeadCount, o.emailStatus], ['ok', 1, 'opted_out']);
+  assert.equal(calls.emails.length, 0);
+  assert.equal(calls.saved.length, 1, 'the leads are stored as usual');
+  assert.deepEqual(settings.checked, [['service', 'u1']], 'checked with the service key, for the job owner');
+  assert.deepEqual(accounts.lookedUp, [], 'and the address is not even looked up');
+  assert.equal(calls.runs[0][1].email_status, 'opted_out');
+});
+
+test('the setting is only checked when there is something new to send', async () => {
+  const settings = emailsOn(true);
+  const { runner } = harness({ rows: [jobRow()], searchImpl: async () => ({ threads: [], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), settings });
+  await runner.runDueJobs();
+  assert.deepEqual(settings.checked, []);
+});
+
+test('the lead email says how to stop it', () => {
+  const { text, html } = leadsEmail({ product: { name: 'P' }, job: { minScore: 0.8, endDate: '2026-10-30' }, leads: [{ title: 'T', url: 'https://x', source: 'reddit', relevanceScore: 0.9 }], from: now, to: now });
+  for (const body of [text, html]) assert.match(body, /turn off job emails under Email notifications in your profile settings, or cancel the job/);
 });
