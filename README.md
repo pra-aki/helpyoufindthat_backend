@@ -200,6 +200,33 @@ curl -s -X DELETE "https://helpyoufindthat-backend.onrender.com/api/products/$PR
 
 Note that a deleted lead can come back if a later search finds the same thread again, since searches store whatever they find.
 
+### `PATCH /api/products/:id/results/:resultId`
+
+Changes one lead: whether the user has replied to it, and whether they found it useful. Send either or both.
+
+| Field | Notes |
+|---|---|
+| `responded` | `true` marks the lead replied to and sets `respondedAt`; `false` clears it. |
+| `useful` | The answer to "Is this lead useful?" from the thumbs up or down: `true` or `false`, or `null` to clear the rating. Sets `ratedAt`. |
+| `note` | Optional, with a rating only: anything the user wants to add, up to 2000 characters. Also `details`. |
+
+```bash
+curl -s -X PATCH "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results/$RESULT_ID" \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"useful":false,"note":"They are selling a CRM, not looking for one"}'
+```
+
+Returns `{ productId, result }` with the updated lead; a lead that is not under the caller's product is 404. A rating replaces the previous one, note included, so rating again without a note clears the old note. The rating lives on the lead, so a search that finds the same thread again keeps it.
+
+To see how users rate leads against the model's relevance score, in the Supabase SQL editor:
+
+```sql
+select r.useful, r.relevance_score, r.title, r.feedback_note, r.rated_at, p.name as product
+from search_results r join products p on p.id = r.product_id
+where r.useful is not null
+order by r.rated_at desc;
+```
+
 ### `GET /api/products/:id/results`
 
 Stored search results for one of your products, latest search first, then by relevance score.
@@ -215,7 +242,7 @@ Stored search results for one of your products, latest search first, then by rel
 curl -s "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results?limit=100&source=reddit" -H "Authorization: Bearer $TOKEN"
 ```
 
-Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, respondedAt, jobId, createdAt } ], count, total, limit, offset }`. `jobId` is the scheduled job whose run last stored the lead, or null if only manual searches found it. `total` is the number of matching rows regardless of paging.
+Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, respondedAt, useful, feedbackNote, ratedAt, jobId, createdAt } ], count, total, limit, offset }`. `jobId` is the scheduled job whose run last stored the lead, or null if only manual searches found it. `total` is the number of matching rows regardless of paging.
 
 **How storage works.** A thread is stored once per product, keyed on the link. If a later search returns the same thread again, its row is updated in place: `searchDate` moves to the latest search and the score, title, and summary are refreshed. Nothing is ever duplicated, and no result is excluded from a search because it was seen before. The search itself is stateless; to get different threads, change the product description.
 

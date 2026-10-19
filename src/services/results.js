@@ -19,6 +19,10 @@ export const resultToApi = (row) =>
     jobId: row.job_id ?? null,
     searchDate: row.search_date,
     respondedAt: row.responded_at ?? null,
+    // The user's answer to "Is this lead useful?": true, false, or null until they rate it.
+    useful: row.useful ?? null,
+    feedbackNote: row.feedback_note ?? null,
+    ratedAt: row.rated_at ?? null,
     createdAt: row.created_at,
   };
 
@@ -88,6 +92,23 @@ export function createResultsService(db) {
      * filter, so a lead under someone else's product is simply not found. Returns the
      * updated row, or null when there is no such lead.
      */
+    /**
+     * Rates a lead as useful or not, with an optional note, or clears the rating with useful: null.
+     * Patched under its product, as the user. Returns the updated lead, or null if it is not there.
+     */
+    async setFeedback(token, productId, id, { useful, note }, { at = new Date() } = {}) {
+      const patch = useful === null
+        ? { useful: null, feedback_note: null, rated_at: null }
+        : { useful, feedback_note: note ?? null, rated_at: at.toISOString() };
+      try {
+        const row = await db.update(token, 'search_results', { id: `eq.${id}`, product_id: `eq.${productId}` }, patch);
+        return resultToApi(row);
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 404) return null;
+        throw err;
+      }
+    },
+
     async setResponded(token, productId, id, responded, { at = new Date() } = {}) {
       try {
         const row = await db.update(

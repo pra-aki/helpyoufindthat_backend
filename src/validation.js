@@ -387,3 +387,35 @@ export function parseErrorReport(source) {
   }
   return { message, page, error, details };
 }
+
+/**
+ * Validates a change to one lead. Returns { responded?, useful?, note? }.
+ *
+ *   responded           true or false: whether the user has replied to the thread
+ *   useful              true or false answers "Is this lead useful?"; null clears the rating
+ *   note | details      optional, with a rating only, up to 2000 characters
+ *
+ * A rating replaces any earlier one, note included, so a new rating without a note clears the old note.
+ */
+export function parseLeadUpdate(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) throw new HttpError(400, 'Request body must be a JSON object');
+  const change = {};
+  if (source.responded !== undefined) change.responded = parseBoolean(source.responded, 'responded');
+  if (source.useful !== undefined) {
+    if (source.useful !== null && typeof source.useful !== 'boolean') {
+      throw new HttpError(400, '"useful" must be true, false, or null to clear the rating', { field: 'useful', received: source.useful });
+    }
+    change.useful = source.useful;
+  }
+  const noteRaw = firstDefined(source, ['note', 'details']);
+  if (noteRaw !== undefined) {
+    if (change.useful === undefined || change.useful === null) {
+      throw new HttpError(400, 'A note goes with a rating: send "useful" as true or false with it', { field: 'note' });
+    }
+    change.note = optionalText(noteRaw, { name: 'note', max: 2000 });
+  }
+  if (change.responded === undefined && change.useful === undefined) {
+    throw new HttpError(400, 'Send "responded", "useful", or both', { fields: ['responded', 'useful'] });
+  }
+  return change;
+}
