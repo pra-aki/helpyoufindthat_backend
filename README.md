@@ -336,7 +336,6 @@ A job runs the same search every day without the user doing anything: from the d
 | `endDate` | yes | | Last day the job runs, `YYYY-MM-DD` (UTC), inclusive. Today or later, at most 92 days out. Also `to` / `until`. |
 | `threads` | no | 10 | Maximum threads per run, across the forums (1 to 50). |
 | `minScore` | no | 0.8 | Only threads with `relevanceScore` at or above this are stored and emailed (0 to 1). |
-| `email` | no | your account's | Where the daily email goes. |
 
 ```bash
 curl -s https://helpyoufindthat-backend.onrender.com/api/jobs \
@@ -349,7 +348,7 @@ Returns `201` with the job:
 ```json
 {
   "job": {
-    "id": "...", "productId": "...", "productName": "FollowUp", "userId": "...", "email": "you@example.com",
+    "id": "...", "productId": "...", "productName": "FollowUp", "userId": "...",
     "forums": ["reddit", "facebook-groups", "quora", "linkedin-groups", "hackernews", "x"],
     "threads": 10, "minScore": 0.8, "startDate": "2026-09-17", "endDate": "2026-10-17",
     "status": "active", "nextRunAt": "2026-09-17T14:02:11.318Z",
@@ -390,7 +389,7 @@ Each run also has `creditsSpent`, what it cost after refunds. `foundCount` is wh
 
 **What each run searches.** The trailing week, `SEARCH_JOBS_LOOKBACK_DAYS` (7 by default), not just the day since the last run. Perplexity's search index trails the forums by about two days: a search run on a given day finds posts up to two days old and nothing newer, so searching only yesterday and today comes back empty almost every time. A week-wide window picks up a post once it becomes searchable, and costs the same, since each run is still one Perplexity call per forum. The overlap between runs is harmless: a thread is stored once per product, so a repeat find refreshes the row rather than duplicating it, and only leads not already stored go in the email. If runs were missed for longer than the lookback, because the server was down or searches kept failing, the next run reaches back to the last day a successful run covered, so no day is skipped. A six-forum job costs six calls a day.
 
-**The email.** One message per run with at least one new lead, listing each thread's title, link, forum, score, what the author asks for, and the summary. It is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `EMAIL_FROM` (an address on a domain verified in Resend). Without them, jobs still run and store leads, and the run records `emailStatus: "not_configured"`.
+**The email.** It always goes to the account's own address, looked up when the run sends, so a user who changes their address gets the emails at the new one. A job cannot be given an address: a request with `email` is refused with 400, so a job can never be pointed at someone who did not sign up. An account with no address gets no email, recorded as `emailStatus: "failed"`, and its leads are still stored. One message per run with at least one new lead, listing each thread's title, link, forum, score, what the author asks for, and the summary. It is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `EMAIL_FROM` (an address on a domain verified in Resend). Without them, jobs still run and store leads, and the run records `emailStatus: "not_configured"`.
 
 **How it runs.** Jobs belong to users who are not signed in when their job is due, so the runner needs `SUPABASE_SERVICE_ROLE_KEY`, which bypasses row-level security. The same key is used to create and cancel jobs: users can read their own jobs but not write them, because a job has limits and spends Perplexity credit every day, and a user writing the table directly would skip the backend's checks. The route first checks with the caller's own token that the product or job is theirs, then writes with the service key. Every other route acts only with the caller's token. Either a new-format secret key (`sb_secret_...`, preferred, since it can be revoked on its own) or the legacy `service_role` key works. Due jobs run one after another through the same Perplexity queue as interactive searches, so a running job makes a user's own search wait a few seconds longer for its turn. A job is claimed by moving its `nextRunAt` forward in a conditional update, so several instances can run the loop without running a job twice. Each job search is also written to the search log.
 

@@ -63,11 +63,12 @@ export const searchWindow = (job, { now, maxDays, lookbackDays }) => {
  * @param {object} deps.searchLog   search log; job searches are logged like interactive ones
  * @param {object} deps.mailer      mailer (src/services/mailer.js)
  * @param {object} deps.credits     credits service; each run is paid for from the job owner's credits
+ * @param {object} deps.accounts    accounts service; new leads go to the owner's current email
  * @param {Function} [deps.search]  thread search, injectable for tests
  * @param {object} [deps.logger]
  * @param {Function} [deps.now]     clock, injectable for tests
  */
-export function createJobRunner({ config, db, jobs, results, searchLog, mailer, credits, search = searchThreads, logger = console, now = () => new Date() }) {
+export function createJobRunner({ config, db, jobs, results, searchLog, mailer, credits, accounts, search = searchThreads, logger = console, now = () => new Date() }) {
   const serviceToken = config.supabase.serviceRoleKey;
   let warned = false;
   let running = false;
@@ -137,7 +138,10 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
           emailStatus = 'not_configured';
         } else {
           try {
-            await mailer.send({ to: job.email, ...leadsEmail({ product, job, leads: newLeads, from, to }) });
+            // Always the account's own address as it is now, never one stored on the job.
+            const address = await accounts.getEmail(job.userId);
+            if (!address) throw new Error('the account has no email address');
+            await mailer.send({ to: address, ...leadsEmail({ product, job, leads: newLeads, from, to }) });
             emailStatus = 'sent';
           } catch (err) {
             emailStatus = 'failed';

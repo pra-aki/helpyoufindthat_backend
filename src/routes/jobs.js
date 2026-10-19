@@ -24,9 +24,9 @@ export function jobsRouter({ config, products, jobs, protect }) {
     if (!serviceToken) throw new HttpError(500, 'Server is missing SUPABASE_SERVICE_ROLE_KEY; scheduled searches are not configured');
   };
 
-  // POST /api/jobs  { "productId": "<uuid>", "forum": "all", "endDate": "2026-10-17", "threads": 10, "minScore": 0.8, "email": "..." }
+  // POST /api/jobs  { "productId": "<uuid>", "forum": "all", "endDate": "2026-10-17", "threads": 10, "minScore": 0.8 }
   //   -> schedules a search every day from today until endDate. Leads scoring at least minScore are
-  //      stored under the product, and new ones are emailed. Nothing is searched until the runner's next pass.
+  //      stored under the product, and new ones are emailed to the account's own address.
   router.post('/jobs', ...protect, async (req, res) => {
     const source = req.body;
     if (!source || typeof source !== 'object') throw new HttpError(400, 'Request body must be a JSON object');
@@ -39,8 +39,8 @@ export function jobsRouter({ config, products, jobs, protect }) {
 
     const product = await products.get(token, productId); // 404 if it doesn't exist or isn't the caller's
 
-    const email = input.email ?? req.user?.email;
-    if (!email) throw new HttpError(400, 'Your account has no email address; pass "email" in the request', { field: 'email' });
+    // Each run emails the account's current address, so there must be one to send to.
+    if (!req.user?.email) throw new HttpError(400, 'Your account has no email address, so a job would have nowhere to send its leads', { field: 'email' });
 
     const active = await jobs.countActive(token);
     if (active >= config.jobs.maxActivePerUser) {
@@ -49,7 +49,6 @@ export function jobsRouter({ config, products, jobs, protect }) {
 
     const job = await jobs.create(serviceToken, req.user, {
       productId,
-      email,
       forums: input.forums,
       threads: input.threads,
       minScore: input.minScore,

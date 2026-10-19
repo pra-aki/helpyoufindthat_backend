@@ -297,15 +297,16 @@ const parseScore = (value, { name, fallback }) => {
 
 /**
  * Validates a request to schedule a daily search. Returns
- * { forums, threads, minScore, startDate, endDate, email }, where the dates are UTC days
- * and email is undefined when the caller did not supply one.
+ * { forums, threads, minScore, startDate, endDate }, where the dates are UTC days.
+ *
+ * There is no email field: a job always emails the account's own current address. One in the
+ * request is refused rather than ignored, so a caller never believes a job will email elsewhere.
  *
  * Accepted parameter spellings:
  *   forum | forums | forumName | forum_name     (id, list of ids, comma-separated ids, or "all")
  *   threads | maxThreads | max_threads          (per run; default 10, max 50)
  *   endDate | end_date | to | until | runUntil  (YYYY-MM-DD, inclusive; today or later, at most maxDays out)
- *   minScore | min_score                        (0 to 1; default 0.8)
- *   email                                       (defaults to the signed-in user's address)
+  *   minScore | min_score                        (0 to 1; default 0.8)
  */
 export function parseJobRequest(source, config, { now = new Date() } = {}) {
   if (!source || typeof source !== 'object') throw new HttpError(400, 'Request body must be a JSON object');
@@ -328,10 +329,11 @@ export function parseJobRequest(source, config, { now = new Date() } = {}) {
     throw new HttpError(400, `"endDate" may be at most ${config.limits.maxDays} days from today`, { field: 'endDate', received: isoDay(endDate), spanDays, maxDays: config.limits.maxDays });
   }
 
-  const emailRaw = firstDefined(source, ['email', 'notifyEmail', 'notify_email']);
-  const email = emailRaw === undefined ? undefined : parseEmail(emailRaw);
+  if (['email', 'notifyEmail', 'notify_email'].some((key) => source[key] !== undefined)) {
+    throw new HttpError(400, 'A job cannot be given an email address; it always emails your account\'s address', { field: 'email' });
+  }
 
-  return { forums, threads, minScore, startDate, endDate, email };
+  return { forums, threads, minScore, startDate, endDate };
 }
 
 const JOB_STATUSES = ['active', 'completed', 'cancelled'];

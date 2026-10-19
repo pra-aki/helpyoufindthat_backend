@@ -86,6 +86,6 @@ export function createApp({ config, search, verify, products, results, describe,
     reportLimiter.stop();
   };
   // Shared with the job runner (src/server.js) so it stores results the same way the routes do.
-  app.locals.services = { db, products: productsService, results: resultsService, searchLog: searchLogService, jobs: jobsService, credits: creditsService };
+  app.locals.services = { db, products: productsService, results: resultsService, searchLog: searchLogService, jobs: jobsService, credits: creditsService, accounts: accountsService };
   return app;
 }

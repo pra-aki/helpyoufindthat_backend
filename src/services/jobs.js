@@ -17,7 +17,6 @@ export const jobToApi = (row) =>
     // Present when the query embeds the product, so a list of jobs across products can name them.
     productName: row.products?.name ?? null,
     userId: row.user_id,
-    email: row.email,
     forums: row.forums,
     threads: row.threads,
     minScore: num(row.min_score),
@@ -67,11 +66,10 @@ export function createJobsService(db) {
      * after checking the product is the caller's; user_id comes from the verified token. The route
      * books nextRunAt into the next daily slot.
      */
-    async create(token, user, { productId, email, forums, threads, minScore, startDate, endDate, nextRunAt = new Date() }) {
+    async create(token, user, { productId, forums, threads, minScore, startDate, endDate, nextRunAt = new Date() }) {
       const row = await db.insert(token, 'search_jobs', {
         product_id: productId,
         user_id: user.id,
-        email,
         forums: forums.map((f) => f.id),
         threads,
         min_score: minScore,

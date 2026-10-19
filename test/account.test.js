@@ -65,3 +65,14 @@ test('DELETE /api/account deletes the signed-in user, never one named in the bod
   assert.deepEqual(await res.json(), { deleted: true });
   assert.deepEqual(deleted, ['user-1']);
 });
+
+test('getEmail reads the account\'s current address with the service key', async () => {
+  const ok = capture(200, { id: 'u-1', email: 'now@example.com' });
+  assert.equal(await createAccountsService(supabase('sb_secret_abc'), { fetchImpl: ok.fetchImpl }).getEmail('u-1'), 'now@example.com');
+  assert.equal(ok.calls[0].url, 'https://abc.supabase.co/auth/v1/admin/users/u-1');
+  assert.equal(ok.calls[0].init.method, undefined, 'a plain GET');
+  assert.deepEqual(ok.calls[0].init.headers, { apikey: 'sb_secret_abc' });
+  assert.equal(await createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(404).fetchImpl }).getEmail('gone'), null);
+  assert.equal(await createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(200, { id: 'u', email: '' }).fetchImpl }).getEmail('u'), null);
+  await assert.rejects(createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(500, { msg: 'boom' }).fetchImpl }).getEmail('u'), (e) => e.status === 502);
+});

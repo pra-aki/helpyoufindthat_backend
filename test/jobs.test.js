@@ -25,9 +25,10 @@ const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { sta
 
 test('parseJobRequest: defaults, spellings, and the date window', () => {
   const a = parseJobRequest({ forum: 'reddit', endDate: '2026-10-01' }, config, { now });
-  assert.deepEqual([a.forums.map((f) => f.id), a.threads, a.minScore, a.startDate.toISOString(), a.endDate.toISOString(), a.email], [['reddit'], 10, 0.8, '2026-09-17T00:00:00.000Z', '2026-10-01T00:00:00.000Z', undefined]);
-  const b = parseJobRequest({ forums: ['Reddit', 'hackernews'], until: '2026-09-17', maxThreads: '5', min_score: '0.9', email: ' me@example.com ' }, config, { now });
-  assert.deepEqual([b.forums.map((f) => f.id), b.threads, b.minScore, b.email], [['reddit', 'hackernews'], 5, 0.9, 'me@example.com']);
+  assert.deepEqual([a.forums.map((f) => f.id), a.threads, a.minScore, a.startDate.toISOString(), a.endDate.toISOString()], [['reddit'], 10, 0.8, '2026-09-17T00:00:00.000Z', '2026-10-01T00:00:00.000Z']);
+  assert.ok(!('email' in a), 'a job carries no address of its own');
+  const b = parseJobRequest({ forums: ['Reddit', 'hackernews'], until: '2026-09-17', maxThreads: '5', min_score: '0.9' }, config, { now });
+  assert.deepEqual([b.forums.map((f) => f.id), b.threads, b.minScore], [['reddit', 'hackernews'], 5, 0.9]);
   assert.equal(parseJobRequest({ forum: 'all', to: '2026-12-18' }, config, { now }).forums.length, 6, '92 days out is allowed');
 });
 
@@ -40,7 +41,8 @@ test('parseJobRequest rejects bad input with 400', () => {
   bad({ forum: 'reddit', endDate: '2026-12-19' }, /at most 92 days/);
   bad({ forum: 'reddit', endDate: '2026-10-01', minScore: 1.5 }, /minScore/);
   bad({ forum: 'reddit', endDate: '2026-10-01', threads: 51 }, /threads/);
-  bad({ forum: 'reddit', endDate: '2026-10-01', email: 'nope' }, /email/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', email: 'someone@example.com' }, /cannot be given an email address/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', notifyEmail: 'someone@example.com' }, /cannot be given an email address/);
   bad(null, /JSON object/);
 });
 
@@ -69,8 +71,8 @@ test('jobs service: create stamps the user and forum ids; claim is a compare-and
     selectOne: async () => jobRow(),
   };
   const svc = createJobsService(db);
-  const created = await svc.create('tok', { id: 'u1' }, { productId: PID, email: 'u@example.com', forums: [{ id: 'reddit' }], threads: 10, minScore: 0.8, startDate: '2026-09-17', endDate: '2026-09-20', nextRunAt: now });
-  assert.deepEqual(calls[0], ['insert', 'tok', 'search_jobs', { product_id: PID, user_id: 'u1', email: 'u@example.com', forums: ['reddit'], threads: 10, min_score: 0.8, start_date: '2026-09-17', end_date: '2026-09-20', status: 'active', next_run_at: '2026-09-17T10:00:00.000Z' }]);
+  const created = await svc.create('tok', { id: 'u1' }, { productId: PID, forums: [{ id: 'reddit' }], threads: 10, minScore: 0.8, startDate: '2026-09-17', endDate: '2026-09-20', nextRunAt: now });
+  assert.deepEqual(calls[0], ['insert', 'tok', 'search_jobs', { product_id: PID, user_id: 'u1', forums: ['reddit'], threads: 10, min_score: 0.8, start_date: '2026-09-17', end_date: '2026-09-20', status: 'active', next_run_at: '2026-09-17T10:00:00.000Z' }]);
   assert.deepEqual([created.minScore, created.status, created.runCount, created.lastRunAt], [0.8, 'active', 0, null], 'rows come back in camelCase with numeric score');
   assert.equal(await svc.countActive('tok'), 3);
 
@@ -145,7 +147,8 @@ const thread = (url, relevanceScore, over = {}) => ({ title: `T ${relevanceScore
 
 /** In-memory jobs table plus fakes for everything the runner touches. */
 const unlimitedCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100 };
-const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits, logged = [] }) => {
+const accountAt = (address) => ({ lookedUp: [], async getEmail(userId) { this.lookedUp.push(userId); return address; } });
+const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, credits = unlimitedCredits, logged = [], accounts = accountAt('u@example.com') }) => {
   const jobs = new Map(rows.map((r) => [r.id, { ...r }]));
   const calls = { search: [], saved: [], logged: [], emails: [], runs: [], products: [] };
   const db = {
@@ -168,7 +171,7 @@ const harness = ({ rows, searchImpl, sendImpl, existingLinks = [], clock = now, 
   };
   const searchLog = { record: async (token, entry) => { calls.logged.push([token, entry]); return true; } };
   const mailer = { configured: Boolean(sendImpl), send: async (msg) => { calls.emails.push(msg); return sendImpl(msg); } };
-  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: (...a) => logged.push(a.join(' ')), warn: () => {} }, now: () => clock });
+  const runner = createJobRunner({ config, db, jobs: createJobsService(db), results, searchLog, mailer, credits, accounts, search: async (args) => { calls.search.push(args); return searchImpl(args); }, logger: { error: (...a) => logged.push(a.join(' ')), warn: () => {} }, now: () => clock });
   return { runner, jobs, calls };
 };
 
@@ -349,11 +352,16 @@ test('POST /api/jobs requires auth, checks the product, and returns 201 with the
   assert.ok(booked > new Date() && booked - new Date() <= 24 * 60 * 60 * 1000, 'the next slot, within a day');
   const { job } = await ok.json();
   assert.equal(job.productName, 'FollowUp', 'a new job names its product, which the route already read');
-  assert.deepEqual([job.productId, job.email, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, 'u@example.com', ['reddit', 'hackernews'], 5, 0.8, today, today, 'active', 'user-1']);
+  assert.deepEqual([job.productId, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, ['reddit', 'hackernews'], 5, 0.8, today, today, 'active', 'user-1']);
+  assert.ok(!('email' in job), 'no address is stored on or returned with a job');
 
-  const custom = await post({ productId: PID, forum: 'x', endDate: today, minScore: 0.9, email: 'other@example.com' });
-  assert.equal(custom.status, 201);
-  assert.deepEqual([(await custom.json()).job.minScore, store[1].email], [0.9, 'other@example.com']);
+  const elsewhere = await post({ productId: PID, forum: 'x', endDate: today, email: 'stranger@example.com' });
+  assert.equal(elsewhere.status, 400, 'a job cannot be pointed at another address');
+  assert.equal(store.length, 1, 'and nothing was created');
+
+  const second = await post({ productId: PID, forum: 'x', endDate: today, minScore: 0.9 });
+  assert.equal(second.status, 201);
+  assert.equal((await second.json()).job.minScore, 0.9);
 });
 
 test('POST /api/jobs enforces the active job limit', async () => {
@@ -532,4 +540,31 @@ test('GET /api/jobs/:id/leads pages the job\'s leads and 404s for someone else\'
   assert.equal((await fetch(`${base}/api/jobs/${OTHER}/leads`, { headers: headers() })).status, 404);
   assert.equal((await fetch(`${base}/api/jobs/${id}/leads?minScore=2`, { headers: headers() })).status, 400);
   assert.equal((await fetch(`${base}/api/jobs/${id}/leads`)).status, 401);
+});
+
+// ---------- whose address ----------
+
+test('a run emails the account\'s current address, looked up when it sends', async () => {
+  const accounts = accountAt('changed@example.com');
+  const { runner, calls } = harness({ rows: [jobRow({ email: 'old@example.com' })], searchImpl: async () => ({ threads: [thread('https://www.reddit.com/r/a/comments/k1/x/', 0.9)], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), accounts });
+  const [o] = await runner.runDueJobs();
+  assert.equal(o.emailStatus, 'sent');
+  assert.equal(calls.emails[0].to, 'changed@example.com', 'never an address stored on the job');
+  assert.deepEqual(accounts.lookedUp, ['u1']);
+});
+
+test('an account with no address gets no email, but the run still stores its leads', async () => {
+  const { runner, calls } = harness({ rows: [jobRow()], searchImpl: async () => ({ threads: [thread('https://www.reddit.com/r/a/comments/k1/x/', 0.9)], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), accounts: accountAt(null) });
+  const [o] = await runner.runDueJobs();
+  assert.deepEqual([o.status, o.newLeadCount, o.emailStatus], ['ok', 1, 'failed']);
+  assert.match(o.emailError, /no email address/);
+  assert.equal(calls.emails.length, 0);
+  assert.equal(calls.saved.length, 1);
+});
+
+test('no new leads means the account is not even looked up', async () => {
+  const accounts = accountAt('u@example.com');
+  const { runner } = harness({ rows: [jobRow()], searchImpl: async () => ({ threads: [], meta: {}, diagnostics: {} }), sendImpl: async () => ({}), accounts });
+  await runner.runDueJobs();
+  assert.deepEqual(accounts.lookedUp, []);
 });
