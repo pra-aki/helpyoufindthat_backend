@@ -46,13 +46,13 @@ Set `CORS_ORIGINS` to your front end's origin(s) in production. When it's empty 
 
 The sign-up form only creates an account once the user ticks the Terms and Privacy checkbox, and it sends the version they agreed to as `termsVersion` in the new account's metadata. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) copies the version into `terms_acceptances` with the database's own time in `accepted_at`, and `source` set to `signup`.
 
-The account metadata is not the record, because the user can rewrite it through Supabase Auth and its time comes from the browser's clock. `terms_acceptances` is readable by its owner and writable by no user. The trigger cannot block a sign-up: an account created without a version, such as an anonymous session or one added from the Supabase dashboard, records nothing, and a version that fails validation (over 50 characters) is logged and skipped. Accounts created before the checkbox existed have no acceptance on record.
+The account metadata is not the record, because the user can rewrite it through Supabase Auth and its time comes from the browser's clock. `terms_acceptances` is readable by its owner and writable by no user. Each row also keeps the account's email at the time, and the rows outlive the account: deleting an account keeps its acceptances and sets their `account_deleted_at` (see [Deleting an account](#deleting-an-account)). The trigger cannot block a sign-up: an account created without a version, such as an anonymous session or one added from the Supabase dashboard, records nothing, and a version that fails validation (over 50 characters) is logged and skipped. Accounts created before the checkbox existed have no acceptance on record.
 
 To find who accepted what and when:
 
 ```sql
-select u.email, t.terms_version, t.accepted_at
-from terms_acceptances t join auth.users u on u.id = t.user_id
+select t.email, t.terms_version, t.accepted_at, t.account_deleted_at
+from terms_acceptances t
 order by t.accepted_at desc;
 ```
 
@@ -258,6 +258,21 @@ The caller's balance, the pricing, and their credit history, newest first, with 
 `reason` is `signup_grant`, `search`, `job_run`, or `refund`.
 
 **How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend is a single conditional update, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
+
+## Deleting an account
+
+### `DELETE /api/account`
+
+Permanently deletes the signed-in user. Requires the Supabase bearer token and the body `{ "confirm": true }`; without it the request is refused with 400, so a stray call cannot delete an account. The user deleted is always the one the token belongs to, never one named in the body. Returns `{ "deleted": true }`; the front end should then sign the user out locally.
+
+```bash
+curl -s -X DELETE https://helpyoufindthat-backend.onrender.com/api/account \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"confirm":true}'
+```
+
+The backend deletes the user through Supabase Auth's admin API with `SUPABASE_SERVICE_ROLE_KEY`; the browser cannot. Every table cascades from the user, so their products and leads, jobs and run history, search log, credits and ledger, and error reports are all removed with them.
+
+**Terms acceptances are kept.** They are the record that the user agreed to the Terms, so `terms_acceptances` does not reference the account at all. Each row keeps the email the account had when it accepted, and a trigger on account deletion sets `account_deleted_at`. The trigger also covers accounts deleted from the Supabase dashboard, and it can never block a deletion.
 
 ## Error reports
 
