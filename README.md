@@ -42,6 +42,17 @@ Each user is limited to `RATE_LIMIT_PER_MINUTE` searches per minute (default 20)
 
 Set `CORS_ORIGINS` to your front end's origin(s) in production. When it's empty any origin is accepted, which is convenient for local development and safe only because the token, not the origin, is what grants access.
 
+### Sign-up and password emails
+
+Supabase Auth sends the sign-up confirmation and password reset emails, through Resend as its SMTP sender, from `no-reply@leads.helpyoufindthat.com`. Their branded templates live in `supabase/templates/` and are pasted into the Supabase dashboard under Authentication > Emails > Templates:
+
+| Template | File | Subject |
+|---|---|---|
+| Confirm signup | `confirm-signup.html` | Confirm your helpyoufindthat account |
+| Reset password | `reset-password.html` | Reset your helpyoufindthat password |
+
+They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `{{ .Email }}`, and `{{ .Data.name }}` from the sign-up form. Layout is tables with inline styles, which renders consistently across Gmail, Outlook, and Apple Mail. The confirmation email mentions the 100 beta credits, so update it if the sign-up grant changes. The dashboard is the source of truth: edit the file here and paste it again.
+
 ### Terms of Service acceptance
 
 The sign-up form only creates an account once the user ticks the Terms and Privacy checkbox, and it sends the version they agreed to as `termsVersion` in the new account's metadata. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) copies the version into `terms_acceptances` with the database's own time in `accepted_at`, and `source` set to `signup`.
