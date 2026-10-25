@@ -87,10 +87,11 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
     const base = { jobId: job.id, userId: job.userId, productId: job.productId, ranAt, from: isoDay(from), to: isoDay(to) };
     let outcome;
     let creditsSpent = 0;
+    let charged;
     // A refund that fails is logged, not allowed to fail the run's record.
     const refund = async (amount, details) => {
       try {
-        await credits.refund(job.userId, amount, { refundFor: 'job_run', jobId: job.id, ...details });
+        await credits.refund(job.userId, charged, amount, { refundFor: 'job_run', jobId: job.id, ...details });
         creditsSpent -= amount;
       } catch (err) {
         logger.error(`job ${job.id}: credit refund of ${amount} failed:`, err?.message ?? err);
@@ -105,7 +106,7 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
       // run is recorded as an error and nothing is searched; the job stays active and tries again
       // tomorrow, and because the run did not succeed, that search reaches back over today.
       const cost = jobRunCost({ forumCount: forums.length });
-      const charged = await credits.spend(job.userId, cost, 'job_run', { jobId: job.id, productId: job.productId, forums: forums.map((f) => f.id), from: base.from, to: base.to });
+      charged = await credits.spend(job.userId, cost, 'job_run', { jobId: job.id, productId: job.productId, forums: forums.map((f) => f.id), from: base.from, to: base.to });
       if (!charged.charged) {
         throw new HttpError(402, `Not enough credits: this run costs ${cost} and the account has ${charged.balance}`, { cost, balance: charged.balance });
       }

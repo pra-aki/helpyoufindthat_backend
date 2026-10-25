@@ -465,17 +465,17 @@ test('without enough credits nothing is searched, the run is an error, and the j
 
 test('a failed search is refunded in full, and a failed forum its one credit', async () => {
   const refunds = [];
-  const credits = { spend: async () => ({ charged: true, balance: 97 }), refund: async (userId, amount, details) => { refunds.push([userId, amount, details.reason]); return 100; } };
+  const credits = { spend: async () => ({ charged: true, balance: 97 }), refund: async (userId, charge, amount, details) => { refunds.push([userId, amount, details.reason, charge.charged]); return { balance: 100, free: 100, paid: 0 }; } };
   const failing = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews', 'x'] })], searchImpl: async () => { throw new HttpError(502, 'Perplexity down'); }, sendImpl: async () => ({}), credits });
   const [a] = await failing.runner.runDueJobs();
   assert.deepEqual([a.status, a.creditsSpent], ['error', 0]);
-  assert.deepEqual(refunds, [['u1', 3, 'search failed']]);
+  assert.deepEqual(refunds, [['u1', 3, 'search failed', true]], 'refunded against the run\'s own charge');
 
   refunds.length = 0;
   const partial = harness({ rows: [jobRow({ forums: ['reddit', 'hackernews', 'x'] })], searchImpl: async () => ({ threads: [], meta: { failedForums: [{ forum: 'x' }] }, diagnostics: {} }), sendImpl: async () => ({}), credits });
   const [b] = await partial.runner.runDueJobs();
   assert.deepEqual([b.status, b.creditsSpent], ['ok', 2]);
-  assert.deepEqual(refunds, [['u1', 1, 'forum failed']]);
+  assert.deepEqual(refunds, [['u1', 1, 'forum failed', true]]);
 });
 
 test('jobs say what each run costs', () => {

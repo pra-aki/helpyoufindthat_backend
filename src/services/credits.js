@@ -1,8 +1,9 @@
 import { HttpError } from '../errors.js';
 
 /**
- * User credits. Every account starts with 100 (granted by the database when the account is
- * created). A search costs one credit per 10 leads requested, per forum; a scheduled job costs one
+ * User credits, tracked as two balances: free (the 100 granted when an account is created, which
+ * never expire) and paid. Free credits are spent first, and a refund returns credits to the balance
+ * they came from, paid first. Every account starts with 100 free credits. A search costs one credit per 10 leads requested, per forum; a scheduled job costs one
  * credit per forum each day it runs.
  *
  * Users can read their balance and history but never change them: every change goes through
@@ -27,6 +28,8 @@ const transactionToApi = (row) =>
   row && {
     id: row.id,
     delta: row.delta,
+    freeDelta: row.free_delta ?? row.delta,
+    paidDelta: row.paid_delta ?? 0,
     balanceAfter: row.balance_after,
     reason: row.reason,
     details: row.details ?? null,
@@ -44,21 +47,44 @@ export function createCreditsService(db, { serviceToken }) {
     return serviceToken;
   };
 
+  const balances = (out) => ({ balance: Number(out?.balance ?? 0), free: Number(out?.free ?? 0), paid: Number(out?.paid ?? 0) });
+
   return {
-    /** The user's balance, opening their account with the signup grant if it is somehow missing. */
+    /** The user's balances, { balance, free, paid }, opening their account with the sign-up grant if it is missing. */
     async balance(userId) {
-      return Number(await db.rpc(service(), 'ensure_user_credits', { p_user: userId }));
+      return balances(await db.rpc(service(), 'credit_balances', { p_user: userId }));
     },
 
-    /** Spends `amount` if the balance covers it. Resolves to { charged, balance }; never overdraws. */
+    /**
+     * Spends `amount`, free credits first, if the total covers it; never overdraws. Resolves to a
+     * charge: { charged, balance, free, paid, freeSpent, paidSpent }, which refund() takes so that
+     * credits go back where they came from.
+     */
     async spend(userId, amount, reason, details = null) {
       const out = await db.rpc(service(), 'spend_credits', { p_user: userId, p_amount: amount, p_reason: reason, p_details: details });
-      return { charged: out?.charged === true, balance: Number(out?.balance ?? 0) };
+      return {
+        charged: out?.charged === true,
+        ...balances(out),
+        freeSpent: Number(out?.freeSpent ?? 0),
+        paidSpent: Number(out?.paidSpent ?? 0),
+        freeRefunded: 0,
+        paidRefunded: 0,
+      };
     },
 
-    /** Gives back credits for work that failed. Resolves to the new balance. */
-    async refund(userId, amount, details = null) {
-      return Number(await db.rpc(service(), 'refund_credits', { p_user: userId, p_amount: amount, p_details: details }));
+    /**
+     * Gives back `amount` of what `charge` spent, paid credits first, since those are the user's
+     * money. Notes the refund on the charge, so a second refund of the same charge takes only what
+     * is left. Resolves to the new { balance, free, paid }.
+     */
+    async refund(userId, charge, amount, details = null) {
+      const paid = Math.min(amount, charge.paidSpent - charge.paidRefunded);
+      const free = Math.min(amount - paid, charge.freeSpent - charge.freeRefunded);
+      if (paid + free <= 0) return { balance: charge.balance, free: charge.free, paid: charge.paid };
+      const out = balances(await db.rpc(service(), 'refund_credits', { p_user: userId, p_free: free, p_paid: paid, p_details: details }));
+      charge.paidRefunded += paid;
+      charge.freeRefunded += free;
+      return out;
     },
 
     /** The caller's own ledger, newest first, read with their token. */

@@ -271,7 +271,9 @@ Because signed-in users can write their own rows directly, any limit that protec
 
 ## Credits
 
-Every account starts with **100 credits**. Searching spends them; buying more will come later.
+Every account starts with **100 free credits**. Searching spends them; buying more will come later.
+
+**Free and paid credits are tracked separately.** Each account has a free balance (the sign-up grant and any free credits given by hand; they never expire) and a paid balance (credits bought, or paid credits given by hand). The API shows one total with the breakdown. Free credits are spent first, so paid ones last longer. A refund for a failed search or run returns credits to the balance they came from, paid first, so a user's money comes back before free credits do. An account holding paid credits cannot be deleted from the app; see [Deleting an account](#deleting-an-account).
 
 | What | Costs |
 |---|---|
@@ -285,23 +287,29 @@ A scheduled run is charged the same way, from the job owner's credits. Without e
 
 ### `GET /api/credits`
 
-The caller's balance, the pricing, and their credit history, newest first, with `limit` (default 20, max 100) and `offset`.
+The caller's total and its free and paid breakdown, the pricing, and their credit history, newest first, with `limit` (default 20, max 100) and `offset`. Each history row's `freeDelta` and `paidDelta` add up to its `delta`.
 
 ```json
 {
-  "balance": 94,
+  "balance": 94, "free": 84, "paid": 10,
   "pricing": { "signupCredits": 100, "leadsPerCredit": 10, "jobRunCreditsPerForum": 1 },
   "transactions": [
-    { "id": "...", "delta": -4, "balanceAfter": 94, "reason": "search", "details": { "productId": "...", "forums": ["reddit", "hackernews"], "threads": 15 }, "createdAt": "..." },
-    { "id": "...", "delta": 100, "balanceAfter": 100, "reason": "signup_grant", "details": null, "createdAt": "..." }
+    { "id": "...", "delta": -4, "freeDelta": -4, "paidDelta": 0, "balanceAfter": 94, "reason": "search", "details": { "productId": "...", "forums": ["reddit", "hackernews"], "threads": 15 }, "createdAt": "..." },
+    { "id": "...", "delta": 100, "freeDelta": 100, "paidDelta": 0, "balanceAfter": 100, "reason": "signup_grant", "details": null, "createdAt": "..." }
   ],
   "count": 2, "total": 2, "limit": 20, "offset": 0
 }
 ```
 
-`reason` is `signup_grant`, `search`, `job_run`, or `refund`.
+`reason` is `signup_grant`, `search`, `job_run`, `refund`, `purchase`, or `admin_grant`. A search's `credits` field and a 402's `details` also give the total with its `free` and `paid` breakdown.
 
-**How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend is a single conditional update, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
+**Adding credits.** There is no purchase flow yet. `add_credits(user, amount, kind, reason, details)` adds free or paid credits, as a `purchase` (always paid) or an `admin_grant`, and is what the purchase flow will call. Only the service role may run it; to give credits by hand, in the Supabase SQL editor:
+
+```sql
+select add_credits('<user id>', 50, 'paid', 'admin_grant', '{"note": "support goodwill"}');
+```
+
+**How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `add_credits`, `credit_balances`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend locks the account's row while it takes credits, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
 
 ## Settings
 
@@ -322,6 +330,8 @@ Settings live in `user_settings`, one row per user, written only when they chang
 ### `DELETE /api/account`
 
 Permanently deletes the signed-in user. Requires the Supabase bearer token and the body `{ "confirm": true }`; without it the request is refused with 400, so a stray call cannot delete an account. The user deleted is always the one the token belongs to, never one named in the body. Returns `{ "deleted": true }`; the front end should then sign the user out locally.
+
+**An account holding paid credits is not deleted here.** Paid credits are money the user may expect back, so the request is refused with 409: "Your account has 25 paid credits, so it can't be deleted here. Email support@helpyoufindthat.com and we'll take care of it.", with `details` giving `paidCredits` and `supportEmail`. Free credits alone do not block deletion. The address comes from `SUPPORT_EMAIL`.
 
 ```bash
 curl -s -X DELETE https://helpyoufindthat-backend.onrender.com/api/account \
@@ -511,6 +521,7 @@ limit 5;
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | per user |
 | `APP_URL` | `https://helpyoufindthat.com` | the front end's address, for links in emails back into the app |
+| `SUPPORT_EMAIL` | `support@helpyoufindthat.com` | where users are sent for what the app does not do, such as deleting an account with paid credits |
 | `ERROR_REPORTS_PER_MINUTE` | `5` | error reports per user per minute |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |
 | `PERPLEXITY_SEARCH_CONTEXT` | `medium` | `low`, `medium`, or `high` |

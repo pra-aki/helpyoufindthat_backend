@@ -38,9 +38,11 @@ test('deleteUser treats a missing user as deleted, and other failures as 502', a
 const fakeVerify = async (token) => { if (token === 'good') return { id: 'user-1', email: 'u@e.com', role: 'authenticated', isAnonymous: false }; throw new HttpError(401, 'Invalid token'); };
 const deleted = [];
 const fakeAccounts = { deleteUser: async (id) => { deleted.push(id); return { alreadyGone: false }; } };
+let paidCredits = 0;
+const fakeCredits = { balance: async () => ({ balance: 100 + paidCredits, free: 100, paid: paidCredits }) };
 let server; let base;
 before(async () => {
-  server = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon' }), verify: fakeVerify, accounts: fakeAccounts }).listen(0);
+  server = createApp({ config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_ANON_KEY: 'anon' }), verify: fakeVerify, accounts: fakeAccounts, credits: fakeCredits }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -75,4 +77,21 @@ test('getEmail reads the account\'s current address with the service key', async
   assert.equal(await createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(404).fetchImpl }).getEmail('gone'), null);
   assert.equal(await createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(200, { id: 'u', email: '' }).fetchImpl }).getEmail('u'), null);
   await assert.rejects(createAccountsService(supabase('sb_secret_abc'), { fetchImpl: capture(500, { msg: 'boom' }).fetchImpl }).getEmail('u'), (e) => e.status === 502);
+});
+
+test('an account holding paid credits is not deleted here, and the user is pointed to support', async () => {
+  deleted.length = 0;
+  paidCredits = 25;
+  try {
+    const res = await del({ confirm: true });
+    assert.equal(res.status, 409);
+    const { error } = await res.json();
+    assert.match(error.message, /25 paid credits/);
+    assert.match(error.message, /support@helpyoufindthat\.com/);
+    assert.deepEqual(error.details, { paidCredits: 25, supportEmail: 'support@helpyoufindthat.com' });
+    assert.equal(deleted.length, 0, 'nothing was deleted');
+  } finally {
+    paidCredits = 0;
+  }
+  assert.equal((await del({ confirm: true })).status, 200, 'free credits alone do not block it');
 });

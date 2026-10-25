@@ -29,6 +29,8 @@ export function loadConfig(env = process.env) {
     port: num(env.PORT, 3000),
     // The front end's address, for links in emails back into the app.
     appUrl: (env.APP_URL ?? 'https://helpyoufindthat.com').replace(/\/+$/, ''),
+    // Where people are sent for what the app does not do itself, such as deleting an account that holds paid credits.
+    supportEmail: env.SUPPORT_EMAIL ?? 'support@helpyoufindthat.com',
     perplexity: {
       apiKey: env.PERPLEXITY_API_KEY,
       baseUrl: (env.PERPLEXITY_BASE_URL ?? 'https://api.perplexity.ai').replace(/\/+$/, ''),

@@ -54,15 +54,15 @@ export function threadsRouter({ config, search = searchThreads, products, result
     const cost = searchCost({ threads: params.threads, forumCount: params.forums.length });
     const charged = await credits.spend(req.user.id, cost, 'search', { productId, forums: logEntry.forums, threads: params.threads });
     if (!charged.charged) {
-      throw new HttpError(402, `Not enough credits: this search costs ${cost} and you have ${charged.balance}`, { cost, balance: charged.balance });
+      throw new HttpError(402, `Not enough credits: this search costs ${cost} and you have ${charged.balance}`, { cost, balance: charged.balance, free: charged.free, paid: charged.paid });
     }
-    let balance = charged.balance;
+    let balances = { balance: charged.balance, free: charged.free, paid: charged.paid };
     let refunded = 0;
     // A refund that fails is logged rather than failing the response: the search result, or its
     // error, is still what the caller needs.
     const refund = async (amount, details) => {
       try {
-        balance = await credits.refund(req.user.id, amount, { productId, ...details });
+        balances = await credits.refund(req.user.id, charged, amount, { productId, ...details });
         refunded += amount;
       } catch (refundErr) {
         console.error(`credit refund of ${amount} for user ${req.user.id} failed:`, refundErr?.message ?? refundErr);
@@ -107,7 +107,7 @@ export function threadsRouter({ config, search = searchThreads, products, result
       count: threads.length,
       threads,
       saved: { productId, count: stored.length, newCount, existingCount: stored.length - newCount, searchDate: searchDate.toISOString() },
-      credits: { spent: cost - refunded, refunded, balance },
+      credits: { spent: cost - refunded, refunded, ...balances },
       meta: found.meta,
     });
   };

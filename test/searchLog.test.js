@@ -8,7 +8,7 @@ import { analyzeThreadsResponse, parseThreadsResponse, searchThreads } from '../
 import { createSearchLogService, toSearchRequestRow } from '../src/services/searchLog.js';
 
 // Searches are paid for from credits; these tests are about other things, so credits never run out.
-const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100, balance: async () => 100, history: async () => ({ transactions: [], total: 0 }) };
+const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => ({ balance: 100, free: 100, paid: 0 }), balance: async () => ({ balance: 100, free: 100, paid: 0 }), history: async () => ({ transactions: [], total: 0 }) };
 
 const reddit = getForum('reddit');
 const hn = getForum('hackernews');

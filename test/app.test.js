@@ -5,7 +5,7 @@ import { loadConfig } from '../src/config.js';
 import { HttpError } from '../src/errors.js';
 
 // Searches are paid for from credits; these tests are about other things, so credits never run out.
-const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => 100, balance: async () => 100, history: async () => ({ transactions: [], total: 0 }) };
+const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => ({ balance: 100, free: 100, paid: 0 }), balance: async () => ({ balance: 100, free: 100, paid: 0 }), history: async () => ({ transactions: [], total: 0 }) };
 
 const config = loadConfig({ PERPLEXITY_MIN_INTERVAL_MS: '0', PERPLEXITY_API_KEY: 'test-key', SUPABASE_URL: 'https://abc.supabase.co', RATE_LIMIT_PER_MINUTE: '3', CORS_ORIGINS: 'https://app.example.com' });
 let server;

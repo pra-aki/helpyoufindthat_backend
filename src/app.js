@@ -71,7 +71,7 @@ export function createApp({ config, search, verify, products, results, describe,
   app.use('/api', jobsRouter({ config, products: productsService, jobs: jobsService, protect: [authenticate] }));
   app.use('/api', creditsRouter({ credits: creditsService, protect: [authenticate] }));
   app.use('/api', errorReportsRouter({ config, db, protect: [authenticate, reportLimiter] }));
-  app.use('/api', accountRouter({ accounts: accountsService, protect: [authenticate] }));
+  app.use('/api', accountRouter({ accounts: accountsService, credits: creditsService, supportEmail: config.supportEmail, protect: [authenticate] }));
   app.use('/api', settingsRouter({ settings: settingsService, protect: [authenticate] }));
 
   app.use((_req, res) => {
