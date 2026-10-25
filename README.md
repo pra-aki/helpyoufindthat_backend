@@ -51,7 +51,9 @@ Supabase Auth sends the sign-up confirmation and password reset emails, through 
 | Confirm signup | `confirm-signup.html` | Confirm your helpyoufindthat account |
 | Reset password | `reset-password.html` | Reset your helpyoufindthat password |
 
-They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `{{ .Email }}`, and `{{ .Data.name }}` from the sign-up form. Layout is tables with inline styles, which renders consistently across Gmail, Outlook, and Apple Mail. The confirmation email mentions the 100 beta credits, so update it if the sign-up grant changes. The dashboard is the source of truth: edit the file here and paste it again.
+They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `{{ .Email }}`, and `{{ .Data.name }}` from the sign-up form. The confirmation email mentions the 100 beta credits, so update it if the sign-up grant changes.
+
+All emails, these and the job lead emails, share one layout in `src/email/layout.js` that mirrors the front end's theme: the ivory page and card with its rose-tinted border, the red primary with ivory text, medium-weight headings, the system font, and the "H" logo with "help you Find That", drawn in text so no image has to load. It is built from tables with inline styles, which render consistently across Gmail, Outlook, and Apple Mail. The two Supabase templates are generated from it: edit `src/email/authTemplates.js`, run `npm run email-templates`, and paste the files into the dashboard again. A test fails if the committed files fall out of step with the layout.
 
 ### Terms of Service acceptance
 
@@ -506,6 +508,7 @@ limit 5;
 | `SEARCH_JOBS_MAX_ACTIVE_PER_USER` | `5` | |
 | `CORS_ORIGINS` | (any) | comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | per user |
+| `APP_URL` | `https://helpyoufindthat.com` | the front end's address, for links in emails back into the app |
 | `ERROR_REPORTS_PER_MINUTE` | `5` | error reports per user per minute |
 | `PERPLEXITY_MODEL` | `sonar-pro` | `sonar` is cheaper and faster |
 | `PERPLEXITY_SEARCH_CONTEXT` | `medium` | `low`, `medium`, or `high` |

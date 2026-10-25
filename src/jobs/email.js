@@ -1,17 +1,26 @@
 import { isoDay } from '../validation.js';
+import { theme as t, escapeHtml, layout, button, paragraph, link } from '../email/layout.js';
 
-const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const percent = (score) => `${Math.round(Number(score) * 100)}%`;
 
 /**
- * The daily email for a job run: one entry per new lead, with the link, where it was found,
- * the score, what the author asks for, and the summary. Returns { subject, text, html }.
+ * The daily email for a job run: one entry per new lead, with the link, where it was found, the
+ * score, what the author asks for, and the summary, then a button to the job's leads in the app.
+ * Styled like the front end through the shared layout. Returns { subject, text, html }.
+ *
+ * @param {object} args
+ * @param {string} [args.appUrl]  the front end's address, for links back into the app
  */
-export function leadsEmail({ product, job, leads, from, to }) {
+export function leadsEmail({ product, job, leads, from, to, appUrl = 'https://helpyoufindthat.com' }) {
+  const base = appUrl.replace(/\/+$/, '');
+  const leadsUrl = `${base}/dashboard/products/${encodeURIComponent(job.productId)}/jobs/${encodeURIComponent(job.id)}/leads`;
+  const settingsUrl = `${base}/dashboard/profile`;
+
   const n = leads.length;
   const window = isoDay(from) === isoDay(to) ? isoDay(to) : `${isoDay(from)} to ${isoDay(to)}`;
   const subject = `${n} new lead${n === 1 ? '' : 's'} for ${product.name}`;
   const intro = `Your daily search for ${product.name} found ${n} new thread${n === 1 ? '' : 's'} (${window}) where someone is looking for what it does, scored ${percent(job.minScore)} or higher.`;
+  const stop = `This job runs every day until ${job.endDate}. To stop these emails, turn off job emails under Email notifications in your profile settings, or cancel the job.`;
 
   const textLines = [intro, ''];
   for (const lead of leads) {
@@ -22,26 +31,35 @@ export function leadsEmail({ product, job, leads, from, to }) {
     if (lead.summary) textLines.push(`  ${lead.summary}`);
     textLines.push('');
   }
-  textLines.push(`This job runs every day until ${job.endDate}. To stop these emails, turn off job emails under Email notifications in your profile settings, or cancel the job.`);
+  textLines.push(`View all leads: ${leadsUrl}`, '', stop, `Profile settings: ${settingsUrl}`);
 
   const items = leads
-    .map(
-      (lead) => `
-      <li style="margin:0 0 18px 0">
-        <a href="${escapeHtml(lead.url)}" style="font-weight:600;color:#1a56db;text-decoration:none">${escapeHtml(lead.title || lead.url)}</a><br>
-        <span style="color:#555;font-size:13px">${escapeHtml(lead.source)} · relevance ${percent(lead.relevanceScore)}${lead.postedAt ? ` · posted ${escapeHtml(String(lead.postedAt).slice(0, 10))}` : ''}</span>
-        ${lead.asksFor ? `<div style="margin-top:4px"><strong>Asks for:</strong> ${escapeHtml(lead.asksFor)}</div>` : ''}
-        ${lead.summary ? `<div style="margin-top:4px;color:#333">${escapeHtml(lead.summary)}</div>` : ''}
-      </li>`,
-    )
-    .join('');
+    .map((lead) => {
+      const meta = `${escapeHtml(lead.source)} · ${percent(lead.relevanceScore)} match${lead.postedAt ? ` · posted ${escapeHtml(String(lead.postedAt).slice(0, 10))}` : ''}`;
+      return `<tr>
+                  <td style="padding:16px 0;border-top:1px solid ${t.border};font-family:${t.font};">
+                    <a href="${escapeHtml(lead.url)}" target="_blank" style="font-size:16px;line-height:1.4;font-weight:500;color:${t.primary};text-decoration:none;">${escapeHtml(lead.title || lead.url)}</a>
+                    <div style="margin-top:4px;font-size:13px;line-height:1.5;color:${t.muted};">${meta}</div>
+                    ${lead.asksFor ? `<div style="margin-top:10px;padding:8px 12px;border-radius:6px;background-color:${t.secondary};font-size:14px;line-height:1.5;color:${t.foreground};"><span style="color:${t.muted};">Asks for:</span> ${escapeHtml(lead.asksFor)}</div>` : ''}
+                    ${lead.summary ? `<div style="margin-top:8px;font-size:14px;line-height:1.6;color:${t.foreground};">${escapeHtml(lead.summary)}</div>` : ''}
+                  </td>
+                </tr>`;
+    })
+    .join('\n');
 
-  const html = `<!doctype html>
-<html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.45;color:#111;max-width:640px;margin:0 auto;padding:24px">
-  <p>${escapeHtml(intro)}</p>
-  <ol style="padding-left:20px">${items}</ol>
-  <p style="color:#777;font-size:13px">This job runs every day until ${escapeHtml(job.endDate)}. To stop these emails, turn off job emails under Email notifications in your profile settings, or cancel the job.</p>
-</body></html>`;
+  const bodyHtml = `${paragraph(escapeHtml(intro), { margin: '0 0 8px 0' })}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;border-bottom:1px solid ${t.border};">
+                ${items}
+              </table>
+              ${button(escapeHtml(leadsUrl), 'View all leads')}`;
+
+  const html = layout({
+    title: subject,
+    preheader: intro,
+    heading: escapeHtml(`${n} new lead${n === 1 ? '' : 's'} for ${product.name}`),
+    bodyHtml,
+    footerHtml: `This job runs every day until ${escapeHtml(job.endDate)}. To stop these emails, turn off job emails under Email notifications in your ${link(escapeHtml(settingsUrl), 'profile settings')}, or cancel the job.`,
+  });
 
   return { subject, text: textLines.join('\n'), html };
 }

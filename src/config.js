@@ -27,6 +27,8 @@ export function loadConfig(env = process.env) {
   const supabaseUrl = (env.SUPABASE_URL ?? '').replace(/\/+$/, '');
   return {
     port: num(env.PORT, 3000),
+    // The front end's address, for links in emails back into the app.
+    appUrl: (env.APP_URL ?? 'https://helpyoufindthat.com').replace(/\/+$/, ''),
     perplexity: {
       apiKey: env.PERPLEXITY_API_KEY,
       baseUrl: (env.PERPLEXITY_BASE_URL ?? 'https://api.perplexity.ai').replace(/\/+$/, ''),

@@ -592,7 +592,20 @@ test('the setting is only checked when there is something new to send', async ()
   assert.deepEqual(settings.checked, []);
 });
 
-test('the lead email says how to stop it', () => {
-  const { text, html } = leadsEmail({ product: { name: 'P' }, job: { minScore: 0.8, endDate: '2026-10-30' }, leads: [{ title: 'T', url: 'https://x', source: 'reddit', relevanceScore: 0.9 }], from: now, to: now });
-  for (const body of [text, html]) assert.match(body, /turn off job emails under Email notifications in your profile settings, or cancel the job/);
+test('the lead email says how to stop it, and links back into the app', () => {
+  const job = { id: 'job-1', productId: 'prod-1', minScore: 0.8, endDate: '2026-10-30' };
+  const { text, html } = leadsEmail({ product: { name: 'P' }, job, leads: [{ title: 'T', url: 'https://x', source: 'reddit', relevanceScore: 0.9 }], from: now, to: now, appUrl: 'https://app.example.com/' });
+  assert.match(text, /turn off job emails under Email notifications in your profile settings, or cancel the job/);
+  assert.match(html, /turn off job emails under Email notifications in your <a href="https:\/\/app\.example\.com\/dashboard\/profile"[^>]*>profile settings<\/a>, or cancel the job/);
+  const leadsUrl = 'https://app.example.com/dashboard/products/prod-1/jobs/job-1/leads';
+  assert.ok(text.includes(`View all leads: ${leadsUrl}`), 'the plain text version links to the job too');
+  assert.ok(html.includes(`href="${leadsUrl}"`) && html.includes('View all leads'), 'the button goes to the job\'s leads page');
+});
+
+test('the lead email is styled like the front end', () => {
+  const { html } = leadsEmail({ product: { name: 'P' }, job: { id: 'j', productId: 'p', minScore: 0.8, endDate: '2026-10-30' }, leads: [{ title: 'T', url: 'https://x', source: 'reddit', relevanceScore: 0.9, asksFor: 'a scorekeeper' }], from: now, to: now });
+  for (const colour of ['#FFFFF0', '#B8444A', '#2b2b2b', '#f5e6d3', '#F4E3D7']) assert.ok(html.includes(colour), `uses the front end's ${colour}`);
+  assert.ok(!html.includes('#1a56db'), 'no leftover blue links');
+  assert.match(html, /help you<\/span> <span[^>]*>Find That<\/span>/, 'the logo wordmark');
+  assert.match(html, /90% match/);
 });

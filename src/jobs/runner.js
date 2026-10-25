@@ -145,7 +145,7 @@ export function createJobRunner({ config, db, jobs, results, searchLog, mailer, 
             // Always the account's own address as it is now, never one stored on the job.
             const address = await accounts.getEmail(job.userId);
             if (!address) throw new Error('the account has no email address');
-            await mailer.send({ to: address, ...leadsEmail({ product, job, leads: newLeads, from, to }) });
+            await mailer.send({ to: address, ...leadsEmail({ product, job, leads: newLeads, from, to, appUrl: config.appUrl }) });
             emailStatus = 'sent';
           } catch (err) {
             emailStatus = 'failed';
