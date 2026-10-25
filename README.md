@@ -55,6 +55,8 @@ They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `
 
 All emails, these and the job lead emails, share one layout in `src/email/layout.js` that mirrors the front end's theme: the ivory page and card with its rose-tinted border, the red primary with ivory text, medium-weight headings, the system font, and the "H" logo with "help you Find That", drawn in text so no image has to load. It is built from tables with inline styles, which render consistently across Gmail, Outlook, and Apple Mail. The two Supabase templates are generated from it: edit `src/email/authTemplates.js`, run `npm run email-templates`, and paste the files into the dashboard again. A test fails if the committed files fall out of step with the layout.
 
+To see a job lead email in a real inbox, send one with `npm run send-test-email -- --to you@example.com --leads leads.json`, where `leads.json` holds a product, a job, and a few leads. It uses the same code as the daily jobs, prefixes the subject with `[Test]`, and needs `RESEND_API_KEY` and `EMAIL_FROM` in your local `.env`.
+
 ### Terms of Service acceptance
 
 The sign-up form only creates an account once the user ticks the Terms and Privacy checkbox, and it sends the version they agreed to as `termsVersion` in the new account's metadata. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) copies the version into `terms_acceptances` with the database's own time in `accepted_at`, and `source` set to `signup`.
