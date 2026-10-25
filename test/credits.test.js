@@ -188,7 +188,7 @@ test('GET /api/credits returns the balance, the pricing, and the caller\'s ledge
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.deepEqual([body.balance, body.free, body.paid], [57, 57, 0], 'one total, with the free and paid breakdown');
-  assert.deepEqual(body.pricing, { signupCredits: 100, leadsPerCredit: 10, jobRunCreditsPerForum: 1 });
+  assert.deepEqual(body.pricing, { signupCredits: 300, leadsPerCredit: 10, jobRunCreditsPerForum: 1 });
   assert.deepEqual([body.count, body.total, body.limit, body.offset], [1, 1, 5, 0]);
   assert.deepEqual(events, [['balance', 'user-1'], ['history', 'good', { limit: 5, offset: 0 }]]);
   assert.equal((await fetch(`${base}/api/credits`)).status, 401);

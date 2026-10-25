@@ -51,7 +51,7 @@ Supabase Auth sends the sign-up confirmation and password reset emails, through 
 | Confirm signup | `confirm-signup.html` | Confirm your helpyoufindthat account |
 | Reset password | `reset-password.html` | Reset your helpyoufindthat password |
 
-They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `{{ .Email }}`, and `{{ .Data.name }}` from the sign-up form. The confirmation email mentions the 100 beta credits, so update it if the sign-up grant changes.
+They use Supabase's template variables: `{{ .ConfirmationURL }}` for the link, `{{ .Email }}`, and `{{ .Data.name }}` from the sign-up form. The confirmation email mentions the 300 beta credits, so update it if the sign-up grant changes.
 
 All emails, these and the job lead emails, share one layout in `src/email/layout.js` that mirrors the front end's theme: the ivory page and card with its rose-tinted border, the red primary with ivory text, medium-weight headings, the system font, and the "H" logo with "help you Find That", drawn in text so no image has to load. It is built from tables with inline styles, which render consistently across Gmail, Outlook, and Apple Mail. The two Supabase templates are generated from it: edit `src/email/authTemplates.js`, run `npm run email-templates`, and paste the files into the dashboard again. A test fails if the committed files fall out of step with the layout.
 
@@ -271,7 +271,7 @@ Because signed-in users can write their own rows directly, any limit that protec
 
 ## Credits
 
-Every account starts with **100 free credits**. Searching spends them; buying more will come later.
+Every account starts with **300 free credits**. Searching spends them; buying more will come later.
 
 **Free and paid credits are tracked separately.** Each account has a free balance (the sign-up grant and any free credits given by hand; they never expire) and a paid balance (credits bought, or paid credits given by hand). The API shows one total with the breakdown. Free credits are spent first, so paid ones last longer. A refund for a failed search or run returns credits to the balance they came from, paid first, so a user's money comes back before free credits do. An account holding paid credits cannot be deleted from the app; see [Deleting an account](#deleting-an-account).
 
@@ -309,7 +309,7 @@ The caller's total and its free and paid breakdown, the pricing, and their credi
 select add_credits('<user id>', 50, 'paid', 'admin_grant', '{"note": "support goodwill"}');
 ```
 
-**How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `add_credits`, `credit_balances`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend locks the account's row while it takes credits, so two searches at once cannot overdraw. A trigger on new accounts grants the 100 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100.
+**How it is stored.** `user_credits` holds each balance, which the database will not let go below zero. `credit_transactions` is the ledger, one row per change, so any balance can be explained. Users can read their own rows and nothing else. Every change goes through database functions (`spend_credits`, `refund_credits`, `add_credits`, `credit_balances`, `ensure_user_credits`) that only the service role may execute, so the backend needs `SUPABASE_SERVICE_ROLE_KEY` for searches too; without it, searches fail with 500 rather than run free. A spend locks the account's row while it takes credits, so two searches at once cannot overdraw. A trigger on new accounts grants the 300 credits; it cannot block a signup, and if it ever failed, the first balance read or spend grants them instead. Accounts that existed before credits were introduced were given 100, the grant at the time; it became 300 on 2026-10-25, for new accounts only.
 
 ## Settings
 

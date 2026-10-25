@@ -1,9 +1,9 @@
 import { HttpError } from '../errors.js';
 
 /**
- * User credits, tracked as two balances: free (the 100 granted when an account is created, which
+ * User credits, tracked as two balances: free (the 300 granted when an account is created, which
  * never expire) and paid. Free credits are spent first, and a refund returns credits to the balance
- * they came from, paid first. Every account starts with 100 free credits. A search costs one credit per 10 leads requested, per forum; a scheduled job costs one
+ * they came from, paid first. Every account starts with 300 free credits. A search costs one credit per 10 leads requested, per forum; a scheduled job costs one
  * credit per forum each day it runs.
  *
  * Users can read their balance and history but never change them: every change goes through
@@ -13,7 +13,9 @@ import { HttpError } from '../errors.js';
  */
 
 export const LEADS_PER_CREDIT = 10;
-export const SIGNUP_CREDITS = 100; // granted by public.ensure_user_credits; documented here for the API
+// Granted by public.ensure_user_credits; shown here by GET /api/credits. Change both together, with the
+// sign-up confirmation email and the front end's sign-up and home pages.
+export const SIGNUP_CREDITS = 300;
 
 /** A search's cost: one credit per 10 leads requested (rounded up), for each forum searched. */
 export const searchCost = ({ threads, forumCount }) => Math.ceil(threads / LEADS_PER_CREDIT) * forumCount;

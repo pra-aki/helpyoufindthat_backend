@@ -17,7 +17,7 @@ export function authTemplates() {
         preheader: 'Confirm your email to start finding people who are looking for what you offer.',
         heading: 'Confirm your email',
         bodyHtml: `${paragraph('{{ if .Data.name }}Hi {{ .Data.name }},{{ else }}Hi there,{{ end }}')}
-              ${paragraph('Thanks for signing up. Confirm your email address to start finding people who are looking for what you offer. Your account comes with 100 complimentary beta credits.', { margin: '0 0 24px 0' })}
+              ${paragraph('Thanks for signing up. Confirm your email address to start finding people who are looking for what you offer. Your account comes with 300 complimentary beta credits.', { margin: '0 0 24px 0' })}
               ${button('{{ .ConfirmationURL }}', 'Confirm email')}
               ${fallback}`,
         footerHtml: "The link works once. If you didn't create an account with {{ .Email }}, you can ignore this email.",
