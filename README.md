@@ -59,11 +59,14 @@ To see a job lead email in a real inbox, send one with `npm run send-test-email 
 
 ### Terms of Service acceptance
 
-The sign-up form only creates an account once the user ticks the Terms and Privacy checkbox, and it sends the version they agreed to as `termsVersion` in the new account's metadata. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) copies the version into `terms_acceptances` with the database's own time in `accepted_at`, and `source` set to `signup`.
+The sign-up and sign-in pages say "By signing up or continuing with Google, you agree to our Terms of Service and Privacy Policy" next to the buttons. Sign-up goes from the browser straight to Supabase Auth, so this backend never sees it; instead a database trigger on account creation (`record_signup_terms_acceptance`) writes the acceptance into `terms_acceptances` with the database's own time in `accepted_at`:
 
-The account metadata is not the record, because the user can rewrite it through Supabase Auth and its time comes from the browser's clock. `terms_acceptances` is readable by its owner and writable by no user. Each row also keeps the account's email at the time, and the rows outlive the account: deleting an account keeps its acceptances and sets their `account_deleted_at` (see [Deleting an account](#deleting-an-account)). The trigger cannot block a sign-up: an account created without a version, such as an anonymous session or one added from the Supabase dashboard, records nothing, and a version that fails validation (over 50 characters) is logged and skipped. Accounts created before the checkbox existed have no acceptance on record.
+- **Email sign-ups** send the version the page showed as `termsVersion` in the new account's metadata. The trigger records that version with `source` set to `signup`.
+- **Google sign-ups** cannot send anything, since Supabase passes no data from the page through Google's sign-in. The trigger records the version that was live at that moment, the latest in `terms_versions`, with `source` set to `google_signup`. Whether a sign-up came through Google is read from `app_metadata.provider`, which Supabase Auth sets and the caller cannot.
 
-**Sign-ups without the Terms are refused.** The checkbox only runs in the browser, and the project URL and public key ship with the front end, so anyone could call Supabase's sign-up directly and skip it. `hook_require_terms_acceptance` is Supabase Auth's "before user created" hook: it runs before any account is created and refuses one whose `termsVersion` is missing or does not look like a version (`2026-10` or `2026-10-09`), returning "Please accept the Terms of Service and Privacy Policy to create an account." Anonymous sessions are let through, since the API refuses them anyway. It must be enabled in the dashboard under Authentication > Hooks > Before User Created, choosing this Postgres function; creating it does not switch it on. Once enabled, accounts added from the Supabase dashboard, or through a social sign-in if one is added later, are refused too, since they send no version; create test accounts through the sign-up form.
+The account metadata is not the record, because the user can rewrite it through Supabase Auth and its time comes from the browser's clock. `terms_acceptances` is readable by its owner and writable by no user. Each row also keeps the account's email at the time, and the rows outlive the account: deleting an account keeps its acceptances and sets their `account_deleted_at` (see [Deleting an account](#deleting-an-account)). The trigger cannot block a sign-up: an account created without a version, such as an anonymous session or one added from the Supabase dashboard, records nothing, and a version that fails validation (over 50 characters) is logged and skipped. An email sign-up whose version is not the latest in `terms_versions` is still recorded, with a warning in the Postgres logs, since it means the front end and the table have drifted apart. Accounts created before Terms acceptance was recorded have no acceptance on record.
+
+**Email sign-ups without the Terms are refused.** The sign-up page only runs in the browser, and the project URL and public key ship with the front end, so anyone could call Supabase's sign-up directly and skip it. `hook_require_terms_acceptance` is Supabase Auth's "before user created" hook: it runs before any account is created and refuses one whose `termsVersion` is missing or does not look like a version (`2026-10` or `2026-10-09`), returning "Please accept the Terms of Service and Privacy Policy to create an account." Anonymous sessions and Google sign-ups are let through; the API refuses anonymous sessions anyway, and Google sign-ups are recorded by the trigger as above. It must be enabled in the dashboard under Authentication > Hooks > Before User Created, choosing this Postgres function; creating it does not switch it on. Once enabled, accounts added from the Supabase dashboard, or through any other social sign-in added later, are refused too, since they send no version; create test accounts through the sign-up form or Google.
 
 To find who accepted what and when:
 
@@ -73,7 +76,23 @@ from terms_acceptances t
 order by t.accepted_at desc;
 ```
 
-When the Terms change, bump the front end's `TERMS_VERSION`. New sign-ups record the new version; asking existing users to accept it in the app needs an endpoint that does not exist yet.
+When the Terms change, update both places on the day they go live: the front end's `TERMS_VERSION`, and `terms_versions`, which Google sign-ups are recorded from:
+
+```sql
+insert into public.terms_versions (version) values ('2027-01');
+```
+
+To check the two agree, look for recent email sign-ups recorded with a version other than the current one:
+
+```sql
+select t.email, t.terms_version, t.accepted_at
+from terms_acceptances t
+where t.source = 'signup'
+  and t.terms_version <> (select version from terms_versions order by published_at desc limit 1)
+order by t.accepted_at desc limit 20;
+```
+
+Existing users are not asked to accept a new version in the app; tell them by email before it takes effect.
 
 ## API
 
