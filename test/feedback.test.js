@@ -50,7 +50,7 @@ test('setFeedback rates under the product as the user, and a new rating replaces
 
 test('a search that finds a rated lead again leaves its rating alone', async () => {
   const sent = [];
-  const svc = createResultsService({ select: async () => [], upsert: async (token, table, rows) => { sent.push(rows); return rows.map((r, i) => ({ id: `r${i}`, ...r })); } });
+  const svc = createResultsService({ select: async () => [], upsert: async (token, table, rows) => { sent.push(rows); return rows.map((r, i) => ({ id: `r${i}`, ...r })); } }, { serviceToken: 'svc' });
   await svc.save('tok', 'p1', [{ url: 'https://www.reddit.com/r/a/comments/k1/x/', source: 'reddit', title: 'T', relevanceScore: 0.9 }]);
   for (const column of ['useful', 'feedback_note', 'rated_at']) {
     assert.ok(!(column in sent[0][0]), `${column} is not written by a search, so the upsert keeps it`);

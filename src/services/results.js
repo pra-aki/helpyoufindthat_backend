@@ -1,4 +1,5 @@
 import { HttpError } from '../errors.js';
+import { canonicalKey } from './perplexity.js';
 
 /**
  * Stored search results. One row per (product, link); repeat finds refresh
@@ -35,8 +36,38 @@ const toTimestamp = (value) => {
 // PostgREST splits in.(...) on commas, so each value is quoted; links can contain commas.
 const quoteForIn = (value) => `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
 
-export function createResultsService(db) {
+/** The canonicalKey() of a thread link, the same for every way of writing it, or null if it is not an http(s) URL. */
+export const threadKey = (link) => {
+  try {
+    const url = new URL(String(link ?? ''));
+    return /^https?:$/.test(url.protocol) ? canonicalKey(url) : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * @param {object} db                    PostgREST client (src/services/supabaseRest.js)
+ * @param {object} options
+ * @param {string} options.serviceToken  the service key; removed_threads is readable by nothing else
+ */
+export function createResultsService(db, { serviceToken } = {}) {
   return {
+    /**
+     * Which of `keys` belong to posts removed on request. Read with the service key, since the
+     * list is hidden from users. Without the key nothing is saved: a removed post must never be
+     * stored again, so this fails closed rather than skip the check.
+     */
+    async removedKeys(keys) {
+      if (keys.length === 0) return new Set();
+      if (!serviceToken) throw new HttpError(500, 'Server is missing SUPABASE_SERVICE_ROLE_KEY; removed posts cannot be checked');
+      const rows = await db.select(serviceToken, 'removed_threads', {
+        select: 'canonical_key',
+        canonical_key: `in.(${keys.map(quoteForIn).join(',')})`,
+      });
+      return new Set((rows ?? []).map((r) => r.canonical_key));
+    },
+
     /**
      * Which of `links` are already stored under the product. One query, served by the
      * (product_id, link) unique index.
@@ -58,14 +89,19 @@ export function createResultsService(db) {
      * A job's run passes `jobId`, which is stamped on every lead it stores, new or repeat. A manual
      * search passes none, and since an upsert only writes the columns it is given, it leaves an
      * existing job_id alone.
+     *
+     * Threads for posts removed on request (removed_threads) are dropped and not returned, so
+     * callers can tell from the result which threads were kept.
      */
     async save(token, productId, threads, { searchDate = new Date(), jobId } = {}) {
       if (threads.length === 0) return [];
+      const removed = await this.removedKeys([...new Set(threads.map((t) => threadKey(t.url)).filter(Boolean))]);
       const seen = new Set();
       const rows = [];
       for (const t of threads) {
         if (seen.has(t.url)) continue; // PostgREST rejects a batch that hits the same key twice
         seen.add(t.url);
+        if (removed.has(threadKey(t.url))) continue;
         rows.push({
           product_id: productId,
           source_site: t.source,
@@ -79,6 +115,7 @@ export function createResultsService(db) {
           ...(jobId ? { job_id: jobId } : {}),
         });
       }
+      if (rows.length === 0) return [];
       // Read before writing: after the upsert every row looks the same, so this is the only
       // moment the difference between a first find and a repeat find exists.
       const before = await this.existingLinks(token, productId, rows.map((r) => r.link));

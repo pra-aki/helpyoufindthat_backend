@@ -342,6 +342,21 @@ The backend deletes the user through Supabase Auth's admin API with `SUPABASE_SE
 
 **Terms acceptances are kept.** They are the record that the user agreed to the Terms, so `terms_acceptances` does not reference the account at all. Each row keeps the email the account had when it accepted, and a trigger on account deletion sets `account_deleted_at`. The trigger also covers accounts deleted from the Supabase dashboard, and it can never block a deletion.
 
+## Removing a post on request
+
+The Privacy Policy tells anyone who wrote a forum post our users found that they can email support with its link to have it removed. One command does it:
+
+```bash
+npm run remove-thread -- --link https://www.reddit.com/r/x/comments/abc123/title/ --dry-run   # list what would go
+npm run remove-thread -- --link https://www.reddit.com/r/x/comments/abc123/title/             # remove it
+```
+
+It adds the post to `removed_threads` and deletes every stored lead for it, under every product of every user. Posts are matched by the same canonical key search uses to match a thread to its source (`reddit:abc123`, `hn:123`, `x:123`, or host and path), so every way of writing the link counts as the same post. It needs `SUPABASE_SERVICE_ROLE_KEY` in `.env`.
+
+**A removed post is never stored again.** Saving a search's or a job run's results first drops any thread whose key is in `removed_threads`, and a search's response leaves it out too. The list is read with the service key, since it is hidden from users, and without that key nothing is saved rather than the check being skipped. `removed_threads` keeps only the key and the date: no URL, name or email.
+
+Search logs (`search_requests`) may still hold the link until they are purged, within about five weeks.
+
 ## Error reports
 
 ### `POST /api/error-reports`

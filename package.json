@@ -14,6 +14,7 @@
     "jobs": "node --env-file-if-exists=.env src/jobs/run.js",
     "email-templates": "node scripts/build-email-templates.mjs",
     "send-test-email": "node --env-file-if-exists=.env scripts/send-test-email.mjs",
+    "remove-thread": "node --env-file-if-exists=.env scripts/remove-thread.mjs",
     "token": "node --env-file=.env scripts/get-token.mjs"
   },
   "dependencies": {

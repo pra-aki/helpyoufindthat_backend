@@ -21,7 +21,7 @@ const runner = createJobRunner({
   config,
   db,
   jobs: createJobsService(db),
-  results: createResultsService(db),
+  results: createResultsService(db, { serviceToken: config.supabase.serviceRoleKey }),
   searchLog: createSearchLogService(db),
   mailer: createMailer(config.email),
   credits: createCreditsService(db, { serviceToken: config.supabase.serviceRoleKey }),

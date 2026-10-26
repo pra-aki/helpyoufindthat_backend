@@ -501,7 +501,7 @@ test('saving stamps job_id only for a job, so a manual search never clears it', 
     select: async () => [],
     upsert: async (token, table, rows) => { sent.push(rows); return rows.map((r, i) => ({ id: `r${i}`, ...r })); },
   };
-  const results = createResultsService(db);
+  const results = createResultsService(db, { serviceToken: 'svc' });
   const t = { url: 'https://www.reddit.com/r/a/comments/k1/x/', source: 'reddit', title: 'T', relevanceScore: 0.9 };
   const [fromJob] = await results.save('service', PID, [t], { searchDate: now, jobId: 'j1' });
   await results.save('tok', PID, [t], { searchDate: now });

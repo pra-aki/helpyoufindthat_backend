@@ -89,7 +89,8 @@ export function threadsRouter({ config, search = searchThreads, products, result
 
     const stored = await results.save(token, productId, found.threads, { searchDate });
     const idByLink = new Map(stored.map((r) => [r.link, r.id]));
-    const threads = found.threads.map((t) => ({ id: idByLink.get(t.url) ?? null, ...t }));
+    // A thread save() did not keep is a post removed on request, so it is not shown either.
+    const threads = found.threads.filter((t) => idByLink.has(t.url)).map((t) => ({ id: idByLink.get(t.url), ...t }));
     // A link stored for the first time is a new lead; one already under the product was found again.
     const newCount = stored.filter((r) => r.isNew).length;
 

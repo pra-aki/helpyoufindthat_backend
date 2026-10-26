@@ -58,7 +58,7 @@ export function createApp({ config, search, verify, products, results, describe,
   const protect = [authenticate, limiter];
   const db = dbOverride ?? createSupabaseRest(config.supabase);
   const productsService = products ?? createProductsService(db);
-  const resultsService = results ?? createResultsService(db);
+  const resultsService = results ?? createResultsService(db, { serviceToken: config.supabase.serviceRoleKey });
   const searchLogService = searchLog ?? createSearchLogService(db);
   const jobsService = jobs ?? createJobsService(db);
   const creditsService = credits ?? createCreditsService(db, { serviceToken: config.supabase.serviceRoleKey });

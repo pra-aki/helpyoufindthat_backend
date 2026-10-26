@@ -5,7 +5,7 @@ import { loadConfig } from '../src/config.js';
 import { HttpError } from '../src/errors.js';
 import { parseResultsQuery } from '../src/validation.js';
 import { createSupabaseRest } from '../src/services/supabaseRest.js';
-import { createResultsService } from '../src/services/results.js';
+import { createResultsService, threadKey } from '../src/services/results.js';
 
 // Searches are paid for from credits; these tests are about other things, so credits never run out.
 const freeCredits = { spend: async () => ({ charged: true, balance: 100 }), refund: async () => ({ balance: 100, free: 100, paid: 0 }), balance: async () => ({ balance: 100, free: 100, paid: 0 }), history: async () => ({ transactions: [], total: 0 }) };
@@ -58,7 +58,7 @@ const thread = (over = {}) => ({ title: 'T', url: 'https://www.reddit.com/r/a/co
 test('save maps threads to rows, dedupes links within a batch, and returns stored rows in input order', async () => {
   let sent;
   const db = { select: async () => [], upsert: async (token, table, rows) => { sent = rows; return rows.slice().reverse().map((r, i) => ({ id: `id${i}`, ...r })); } };
-  const svc = createResultsService(db);
+  const svc = createResultsService(db, { serviceToken: 'svc' });
   const when = new Date('2026-09-04T10:00:00Z');
   const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1', source: 'hackernews', postedAt: 'unknown' }), thread()], { searchDate: when });
   assert.equal(sent.length, 2, 'duplicate link in the same batch is sent once');
@@ -72,14 +72,53 @@ test('save maps threads to rows, dedupes links within a batch, and returns store
 test('save marks a link already stored under the product as not new, asking for it by quoted link', async () => {
   let q;
   const db = {
-    select: async (token, table, query) => { q = query; return [{ link: 'https://www.reddit.com/r/a/comments/x1/t/' }]; },
+    select: async (token, table, query) => {
+      if (table === 'removed_threads') return [];
+      q = query;
+      return [{ link: 'https://www.reddit.com/r/a/comments/x1/t/' }];
+    },
     upsert: async (token, table, rows) => rows.map((r, i) => ({ id: `id${i}`, ...r })),
   };
-  const svc = createResultsService(db);
+  const svc = createResultsService(db, { serviceToken: 'svc' });
   const stored = await svc.save('tok', 'prod-1', [thread(), thread({ url: 'https://news.ycombinator.com/item?id=1,2', source: 'hackernews' })]);
   assert.deepEqual(stored.map((r) => r.isNew), [false, true]);
   assert.equal(q.product_id, 'eq.prod-1');
   assert.equal(q.link, 'in.("https://www.reddit.com/r/a/comments/x1/t/","https://news.ycombinator.com/item?id=1,2")', 'links are quoted, so a comma in one does not split the list');
+});
+
+test('save drops threads for posts removed on request, matching every way of writing the link', async () => {
+  const calls = [];
+  let sent;
+  const db = {
+    select: async (token, table, query) => {
+      calls.push([token, table, query]);
+      return table === 'removed_threads' ? [{ canonical_key: 'reddit:x1' }] : [];
+    },
+    upsert: async (token, table, rows) => { sent = rows; return rows.map((r, i) => ({ id: `id${i}`, ...r })); },
+  };
+  const svc = createResultsService(db, { serviceToken: 'svc' });
+  // Same Reddit post as the removed one, written with a different slug and host.
+  const stored = await svc.save('tok', 'prod-1', [thread({ url: 'https://old.reddit.com/r/b/comments/X1/another_slug' }), thread({ url: 'https://news.ycombinator.com/item?id=9', source: 'hackernews' })]);
+  assert.deepEqual(sent.map((r) => r.link), ['https://news.ycombinator.com/item?id=9'], 'the removed post is not written');
+  assert.deepEqual(stored.map((r) => r.link), ['https://news.ycombinator.com/item?id=9'], 'nor returned');
+  const [token, table, query] = calls[0];
+  assert.deepEqual([token, table], ['svc', 'removed_threads'], 'the list is read with the service key, not the user token');
+  assert.equal(query.canonical_key, 'in.("reddit:x1","hn:9")');
+});
+
+test('save stores nothing when every thread was removed, and refuses to run without the service key', async () => {
+  let upserted = false;
+  const db = { select: async () => [{ canonical_key: 'reddit:x1' }], upsert: async () => { upserted = true; return []; } };
+  assert.deepEqual(await createResultsService(db, { serviceToken: 'svc' }).save('tok', 'prod-1', [thread()]), []);
+  assert.equal(upserted, false, 'no write when nothing is left');
+  await assert.rejects(createResultsService(db).save('tok', 'prod-1', [thread()]), (e) => e.status === 500 && /SERVICE_ROLE_KEY/.test(e.message), 'fails closed rather than skip the check');
+});
+
+test('threadKey gives one key for every way of writing a post link, and null for anything else', () => {
+  assert.equal(threadKey('https://www.reddit.com/r/a/comments/AbC12/slug/?utm_source=x'), 'reddit:abc12');
+  assert.equal(threadKey('https://old.reddit.com/r/other/comments/abc12'), 'reddit:abc12');
+  assert.equal(threadKey('not a url'), null);
+  assert.equal(threadKey('ftp://example.com/x'), null);
 });
 
 test('setResponded patches the row under its product, and reports a missing lead as null', async () => {
@@ -165,4 +204,26 @@ test('GET /api/products/:id/results pages stored results and 404s for foreign pr
   assert.equal((await fetch(`${base}/api/products/${OTHER}/results`, { headers: auth })).status, 404);
   assert.equal((await fetch(`${base}/api/products/${PID}/results?limit=5000`, { headers: auth })).status, 400);
   assert.equal((await fetch(`${base}/api/products/${PID}/results`)).status, 401);
+});
+
+test('a search does not return a thread that save() dropped as a removed post', async () => {
+  // save() keeps only the Hacker News thread, as it would if the Reddit post had been removed on request.
+  const droppingResults = {
+    save: async (token, productId, threads, { searchDate }) => threads
+      .filter((t) => t.source !== 'reddit')
+      .map((t, i) => ({ id: `kept${i}`, productId, link: t.url, searchDate: searchDate.toISOString(), isNew: true })),
+    list: async () => ({ results: [], total: 0 }),
+  };
+  const app = createApp({ credits: freeCredits, searchLog: { record: async () => true }, config, verify: fakeVerify, search: fakeSearch, products: fakeProducts, results: droppingResults }).listen(0);
+  await new Promise((r) => app.once('listening', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${app.address().port}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ forum: 'reddit', productId: PID }) });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.threads.map((t) => [t.id, t.url]), [['kept0', 'https://news.ycombinator.com/item?id=1']]);
+    assert.equal(body.count, 1);
+    assert.equal(body.saved.count, 1);
+  } finally {
+    app.close();
+  }
 });
