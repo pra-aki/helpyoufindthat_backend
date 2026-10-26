@@ -18,22 +18,28 @@ test('applies defaults x=10, y=1 when not specified', () => {
 });
 
 test('accepts x/y and snake_case spellings, coercing query-string numbers', () => {
-  const r = parseSearchRequest({ product_description: 'desc', forum_name: 'Hacker News', x: '5', y: '30' }, config, { now });
-  assert.equal(r.threads, 5);
+  const r = parseSearchRequest({ product_description: 'desc', forum_name: 'Facebook Groups', x: '20', y: '30' }, config, { now });
+  assert.equal(r.threads, 20);
   assert.equal(r.days, 30);
   assert.equal(isoDay(r.from), '2026-08-05');
-  assert.deepEqual(r.forums.map((f) => f.id), ['hackernews']);
+  assert.deepEqual(r.forums.map((f) => f.id), ['facebook-groups']);
 });
 
 test('forum accepts a list, a comma-separated string, or "all", de-duplicating aliases', () => {
   const ids = (input) => parseForums(input).map((f) => f.id);
-  assert.deepEqual(ids(['reddit', 'Hacker News', 'x']), ['reddit', 'hackernews', 'x']);
-  assert.deepEqual(ids('reddit, hacknews ,twitter'), ['reddit', 'hackernews', 'x']);
+  assert.deepEqual(ids(['reddit', 'Facebook Groups', 'quora']), ['reddit', 'facebook-groups', 'quora']);
+  assert.deepEqual(ids('reddit, facebook ,linkedin'), ['reddit', 'facebook-groups', 'linkedin-groups']);
   assert.deepEqual(ids(['reddit', 'Reddit', 'reddit']), ['reddit']);
-  assert.deepEqual(ids('all'), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups', 'hackernews', 'x']);
-  assert.deepEqual(ids(['reddit', 'ALL']), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups', 'hackernews', 'x']);
-  const r = parseSearchRequest({ productDescription: 'desc', forums: ['quora', 'x'] }, config);
-  assert.deepEqual(r.forums.map((f) => f.id), ['quora', 'x']);
+  assert.deepEqual(ids('all'), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups'], '"all" means the forums the app offers');
+  assert.deepEqual(ids(['reddit', 'ALL']), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups']);
+  const r = parseSearchRequest({ productDescription: 'desc', forums: ['quora', 'linkedin-groups'] }, config);
+  assert.deepEqual(r.forums.map((f) => f.id), ['quora', 'linkedin-groups']);
+});
+
+test('forums the app does not offer are refused, under any spelling', () => {
+  for (const name of ['hackernews', 'Hacker News', 'x', 'twitter']) {
+    assert.throws(() => parseForums(['reddit', name]), (e) => e.status === 400 && /Unsupported forum/.test(e.message) && !e.details.supported.includes('hackernews'), name);
+  }
 });
 
 test('forum list rejects empty lists, non-strings, and unknown entries', () => {
@@ -52,7 +58,10 @@ test('rejects missing or invalid input with 400s', () => {
   rejects({ productDescription: 'desc', forum: 'myspace' }, /Unsupported forum/);
   rejects({ productDescription: 'desc', forum: 'reddit', threads: 0 }, /threads/);
   rejects({ productDescription: 'desc', forum: 'reddit', threads: 2.5 }, /threads/);
-  rejects({ productDescription: 'desc', forum: 'reddit', threads: 999 }, /at most/);
+  rejects({ productDescription: 'desc', forum: 'reddit', threads: 999 }, /one of 10, 20, 30/);
+  rejects({ productDescription: 'desc', forum: 'reddit', threads: 15 }, /one of 10, 20, 30/);
+  rejects({ productDescription: 'desc', forum: 'reddit', threads: 50 }, /one of 10, 20, 30/);
+  rejects({ productDescription: 'desc', forum: 'reddit', threads: 'lots' }, /threads/);
   rejects({ productDescription: 'desc', forum: 'reddit', days: 93 }, /at most 92/);
   rejects({ productDescription: 'desc', forum: 'reddit', days: 'soon' }, /days/);
   rejects({ productDescription: 'x'.repeat(2001), forum: 'reddit' }, /at most 2000/);

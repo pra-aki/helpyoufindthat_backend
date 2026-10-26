@@ -18,6 +18,11 @@ import x from './x.js';
 
 export const forums = Object.freeze([reddit, facebookGroups, quora, linkedinGroups, hackerNews, x]);
 
+// The forums a search or job may name, matching what the app offers. Hacker News and X stay registered
+// so leads already stored from them still display and filter, but new searches cannot reach them.
+const SEARCHABLE_IDS = ['reddit', 'facebook-groups', 'quora', 'linkedin-groups'];
+export const searchableForums = Object.freeze(forums.filter((f) => SEARCHABLE_IDS.includes(f.id)));
+
 export const normalizeForumId = (value) =>
   String(value ?? '')
     .trim()
@@ -39,6 +44,6 @@ export function getForum(value) {
   return lookup.get(normalizeForumId(value)) ?? null;
 }
 
-export function listForums() {
-  return forums.map(({ id, name, aliases, domains }) => ({ id, name, aliases: [...(aliases ?? [])], domains: [...domains] }));
+export function listForums(list = forums) {
+  return list.map(({ id, name, aliases, domains }) => ({ id, name, aliases: [...(aliases ?? [])], domains: [...domains] }));
 }

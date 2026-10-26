@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listForums } from '../forums/index.js';
+import { listForums, searchableForums } from '../forums/index.js';
 import { parseSearchRequest, parseUuid, isoDay } from '../validation.js';
 import { searchThreads } from '../services/perplexity.js';
 import { HttpError } from '../errors.js';
@@ -21,7 +21,7 @@ export function threadsRouter({ config, search = searchThreads, products, result
   const router = Router();
 
   router.get('/forums', (_req, res) => {
-    res.json({ forums: listForums() });
+    res.json({ forums: listForums(searchableForums) });
   });
 
   const handleSearch = async (req, source, res) => {

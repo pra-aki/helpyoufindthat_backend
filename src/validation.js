@@ -1,5 +1,5 @@
 import { HttpError } from './errors.js';
-import { forums as allForums, getForum, listForums } from './forums/index.js';
+import { searchableForums, getForum, listForums } from './forums/index.js';
 
 const firstDefined = (source, keys) => {
   for (const key of keys) {
@@ -20,12 +20,25 @@ const toPositiveInt = (value, { name, fallback, max }) => {
   return n;
 };
 
+/** A number that must be one of `options`, the choices the app offers, or `fallback` when absent. */
+const pickOption = (value, { name, options, fallback }) => {
+  if (value === undefined) return fallback;
+  const n = typeof value === 'number' ? value : Number(String(value).trim());
+  const match = options.find((option) => Math.abs(option - n) < 1e-9);
+  if (match === undefined) {
+    const allowed = options.length === 1 ? `${options[0]}` : `one of ${options.join(', ')}`;
+    throw new HttpError(400, `"${name}" must be ${allowed}`, { field: name, received: value, allowed: options });
+  }
+  return match;
+};
+
 /**
  * Accepts a forum id, a list of ids, a comma-separated string, or "all".
  * Returns a de-duplicated array of forum registry entries in request order.
+ * Only the forums the app offers are accepted, and "all" means those.
  */
 export function parseForums(input) {
-  const supported = listForums().map((f) => f.id);
+  const supported = searchableForums.map((f) => f.id);
   const raw = Array.isArray(input) ? input : typeof input === 'string' ? input.split(',') : input === undefined ? [] : [input];
   const names = raw.map((v) => (typeof v === 'string' ? v.trim() : v)).filter((v) => v !== '' && v !== undefined && v !== null);
 
@@ -36,13 +49,13 @@ export function parseForums(input) {
     throw new HttpError(400, '"forum" must be a string or a list of strings', { field: 'forum', supported: [...supported, 'all'] });
   }
   if (names.some((n) => n.toLowerCase() === 'all')) {
-    return [...allForums];
+    return [...searchableForums];
   }
   const seen = new Set();
   const resolved = [];
   for (const name of names) {
     const forum = getForum(name);
-    if (!forum) {
+    if (!forum || !searchableForums.includes(forum)) {
       throw new HttpError(400, `Unsupported forum "${name}"`, { field: 'forum', received: name, supported: [...supported, 'all'] });
     }
     if (!seen.has(forum.id)) {
@@ -105,7 +118,7 @@ export function parseDateRange(source, config, { now = new Date() } = {}) {
  * Accepted parameter spellings:
  *   productDescription | product_description | description
  *   forum | forums | forumName | forum_name   (id, list of ids, comma-separated ids, or "all")
- *   threads | x | maxThreads | max_threads
+ *   threads | x | maxThreads | max_threads   (10, 20, or 30)
  *   from | startDate | start_date, to | endDate | end_date   (YYYY-MM-DD, inclusive)
  *   days | y                                                (shortcut: the last N days)
  */
@@ -129,10 +142,10 @@ export function parseSearchRequest(source, config, { now = new Date() } = {}) {
 
   const forums = parseForums(firstDefined(source, ['forum', 'forums', 'forumName', 'forum_name']));
 
-  const threads = toPositiveInt(firstDefined(source, ['threads', 'x', 'maxThreads', 'max_threads']), {
+  const threads = pickOption(firstDefined(source, ['threads', 'x', 'maxThreads', 'max_threads']), {
     name: 'threads',
+    options: config.limits.threadOptions,
     fallback: config.defaults.threads,
-    max: config.limits.maxThreads,
   });
   const { from, to, days } = parseDateRange(source, config, { now });
 
@@ -288,13 +301,6 @@ export function parseEmail(value, name = 'email') {
   return email;
 }
 
-const parseScore = (value, { name, fallback }) => {
-  if (value === undefined) return fallback;
-  const n = typeof value === 'number' ? value : Number(String(value).trim());
-  if (!Number.isFinite(n) || n < 0 || n > 1) throw new HttpError(400, `"${name}" must be a number between 0 and 1`, { field: name, received: value });
-  return n;
-};
-
 /**
  * Validates a request to schedule a daily search. Returns
  * { forums, threads, minScore, startDate, endDate }, where the dates are UTC days.
@@ -304,20 +310,24 @@ const parseScore = (value, { name, fallback }) => {
  *
  * Accepted parameter spellings:
  *   forum | forums | forumName | forum_name     (id, list of ids, comma-separated ids, or "all")
- *   threads | maxThreads | max_threads          (per run; default 10, max 50)
+ *   threads | maxThreads | max_threads          (per run; always 10, so may be left out)
  *   endDate | end_date | to | until | runUntil  (YYYY-MM-DD, inclusive; today or later, at most maxDays out)
-  *   minScore | min_score                        (0 to 1; default 0.8)
+ *   minScore | min_score                        (0.25, 0.5, or 0.75; default 0.5)
  */
 export function parseJobRequest(source, config, { now = new Date() } = {}) {
   if (!source || typeof source !== 'object') throw new HttpError(400, 'Request body must be a JSON object');
 
   const forums = parseForums(firstDefined(source, ['forum', 'forums', 'forumName', 'forum_name']));
-  const threads = toPositiveInt(firstDefined(source, ['threads', 'maxThreads', 'max_threads']), {
+  const threads = pickOption(firstDefined(source, ['threads', 'maxThreads', 'max_threads']), {
     name: 'threads',
-    fallback: config.defaults.threads,
-    max: config.limits.maxThreads,
+    options: [config.limits.jobThreads],
+    fallback: config.limits.jobThreads,
   });
-  const minScore = parseScore(firstDefined(source, ['minScore', 'min_score']), { name: 'minScore', fallback: config.jobs.defaultMinScore });
+  const minScore = pickOption(firstDefined(source, ['minScore', 'min_score']), {
+    name: 'minScore',
+    options: config.limits.jobMinScoreOptions,
+    fallback: config.jobs.defaultMinScore,
+  });
 
   const endRaw = firstDefined(source, ['endDate', 'end_date', 'to', 'until', 'runUntil', 'run_until']);
   if (endRaw === undefined) throw new HttpError(400, '"endDate" is required: the last day the job should run, like 2026-10-01', { field: 'endDate' });

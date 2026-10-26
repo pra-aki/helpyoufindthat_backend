@@ -122,11 +122,11 @@ const reset = (free, extra = {}) => { events.length = 0; Object.assign(ledger, {
 test('a search is charged before it runs, one credit per 10 leads per forum, and reports the balance', async () => {
   reset(100);
   searchImpl = async () => ok();
-  const res = await post({ productId: PID, forum: ['reddit', 'hackernews'], threads: 15 });
+  const res = await post({ productId: PID, forum: ['reddit', 'quora'], threads: 20 });
   assert.equal(res.status, 200);
   assert.deepEqual((await res.json()).credits, { spent: 4, refunded: 0, balance: 96, free: 96, paid: 0 });
   assert.deepEqual(events.map((e) => e[0]), ['spend', 'search'], 'paid for before Perplexity is called');
-  assert.deepEqual(events[0], ['spend', 'user-1', 4, 'search', { productId: PID, forums: ['reddit', 'hackernews'], threads: 15 }], 'charged to the verified user, never to an id from the request');
+  assert.deepEqual(events[0], ['spend', 'user-1', 4, 'search', { productId: PID, forums: ['reddit', 'quora'], threads: 20 }], 'charged to the verified user, never to an id from the request');
 });
 
 test('without enough credits the search is refused with 402 and Perplexity is never called', async () => {
@@ -135,8 +135,8 @@ test('without enough credits the search is refused with 402 and Perplexity is ne
   const res = await post({ productId: PID, forum: 'all', threads: 10 });
   assert.equal(res.status, 402);
   const { error } = await res.json();
-  assert.match(error.message, /costs 6 and you have 3/);
-  assert.deepEqual(error.details, { cost: 6, balance: 3, free: 3, paid: 0 });
+  assert.match(error.message, /costs 4 and you have 3/);
+  assert.deepEqual(error.details, { cost: 4, balance: 3, free: 3, paid: 0 });
   assert.ok(!events.some((e) => e[0] === 'search'));
   assert.deepEqual(totals(), { balance: 3, free: 3, paid: 0 }, 'nothing was taken');
 });
@@ -144,6 +144,8 @@ test('without enough credits the search is refused with 402 and Perplexity is ne
 test('bad input and unknown products cost nothing', async () => {
   reset(100);
   assert.equal((await post({ productId: PID, forum: 'myspace' })).status, 400);
+  assert.equal((await post({ productId: PID, forum: 'hackernews' })).status, 400);
+  assert.equal((await post({ productId: PID, forum: 'reddit', threads: 50 })).status, 400);
   assert.equal((await post({ productId: 'b1e90fbd-9ddf-4c0e-a953-616a94d4891c', forum: 'reddit' })).status, 404);
   assert.equal(events.length, 0);
 });
@@ -151,7 +153,7 @@ test('bad input and unknown products cost nothing', async () => {
 test('a search that fails is refunded in full', async () => {
   reset(100);
   searchImpl = async () => { throw new PerplexityError('Perplexity request failed with HTTP 500', { status: 502 }); };
-  const res = await post({ productId: PID, forum: ['reddit', 'x'], threads: 20 });
+  const res = await post({ productId: PID, forum: ['reddit', 'quora'], threads: 20 });
   assert.equal(res.status, 502);
   assert.deepEqual(events.filter((e) => e[0] !== 'search').map((e) => [e[0], e[2]]), [['spend', 4], ['refund', 4]]);
   assert.deepEqual(totals(), { balance: 100, free: 100, paid: 0 });
@@ -159,12 +161,12 @@ test('a search that fails is refunded in full', async () => {
 
 test('a forum whose call failed is refunded its share', async () => {
   reset(100);
-  searchImpl = async () => ok({ meta: { failedForums: [{ forum: 'x', error: 'boom', status: 502 }] } });
-  const res = await post({ productId: PID, forum: ['reddit', 'x'], threads: 20 });
+  searchImpl = async () => ok({ meta: { failedForums: [{ forum: 'quora', error: 'boom', status: 502 }] } });
+  const res = await post({ productId: PID, forum: ['reddit', 'quora'], threads: 20 });
   assert.equal(res.status, 200);
   assert.deepEqual((await res.json()).credits, { spent: 2, refunded: 2, balance: 98, free: 98, paid: 0 });
   const refund = events.find((e) => e[0] === 'refund');
-  assert.deepEqual([refund[2], refund[3].forums], [2, ['x']]);
+  assert.deepEqual([refund[2], refund[3].forums], [2, ['quora']]);
 });
 
 test('a refund that fails is logged and does not change the response', async () => {
@@ -198,7 +200,7 @@ test('GET /api/credits returns the balance, the pricing, and the caller\'s ledge
 test('free credits are spent first, and a failed search gives paid credits back first', async () => {
   reset(3, { paid: 10 });
   searchImpl = async () => { throw new PerplexityError('Perplexity request failed with HTTP 500', { status: 502 }); };
-  const res = await post({ productId: PID, forum: ['reddit', 'x'], threads: 20 });
+  const res = await post({ productId: PID, forum: ['reddit', 'quora'], threads: 20 });
   assert.equal(res.status, 502);
   assert.deepEqual(totals(), { balance: 13, free: 3, paid: 10 }, 'the 3 free and 1 paid spent all came back where they came from');
 });

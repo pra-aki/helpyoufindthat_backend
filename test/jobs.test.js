@@ -25,11 +25,12 @@ const jsonRes = (body, status = 200) => new Response(JSON.stringify(body), { sta
 
 test('parseJobRequest: defaults, spellings, and the date window', () => {
   const a = parseJobRequest({ forum: 'reddit', endDate: '2026-10-01' }, config, { now });
-  assert.deepEqual([a.forums.map((f) => f.id), a.threads, a.minScore, a.startDate.toISOString(), a.endDate.toISOString()], [['reddit'], 10, 0.8, '2026-09-17T00:00:00.000Z', '2026-10-01T00:00:00.000Z']);
+  assert.deepEqual([a.forums.map((f) => f.id), a.threads, a.minScore, a.startDate.toISOString(), a.endDate.toISOString()], [['reddit'], 10, 0.5, '2026-09-17T00:00:00.000Z', '2026-10-01T00:00:00.000Z']);
   assert.ok(!('email' in a), 'a job carries no address of its own');
-  const b = parseJobRequest({ forums: ['Reddit', 'hackernews'], until: '2026-09-17', maxThreads: '5', min_score: '0.9' }, config, { now });
-  assert.deepEqual([b.forums.map((f) => f.id), b.threads, b.minScore], [['reddit', 'hackernews'], 5, 0.9]);
-  assert.equal(parseJobRequest({ forum: 'all', to: '2026-12-18' }, config, { now }).forums.length, 6, '92 days out is allowed');
+  const b = parseJobRequest({ forums: ['Reddit', 'quora'], until: '2026-09-17', maxThreads: '10', min_score: '0.75' }, config, { now });
+  assert.deepEqual([b.forums.map((f) => f.id), b.threads, b.minScore], [['reddit', 'quora'], 10, 0.75]);
+  assert.equal(parseJobRequest({ forum: 'all', to: '2026-12-18' }, config, { now }).forums.length, 4, '92 days out is allowed');
+  assert.equal(parseJobRequest({ forum: 'reddit', endDate: '2026-10-01', minScore: 25 / 100 }, config, { now }).minScore, 0.25, 'the app sends its percent over 100');
 });
 
 test('parseJobRequest rejects bad input with 400', () => {
@@ -40,7 +41,11 @@ test('parseJobRequest rejects bad input with 400', () => {
   bad({ forum: 'reddit', endDate: '2026-09-16' }, /past/);
   bad({ forum: 'reddit', endDate: '2026-12-19' }, /at most 92 days/);
   bad({ forum: 'reddit', endDate: '2026-10-01', minScore: 1.5 }, /minScore/);
-  bad({ forum: 'reddit', endDate: '2026-10-01', threads: 51 }, /threads/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', minScore: 0 }, /minScore" must be one of 0.25, 0.5, 0.75/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', minScore: 0.8 }, /minScore/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', threads: 50 }, /"threads" must be 10/);
+  bad({ forum: 'reddit', endDate: '2026-10-01', threads: 5 }, /"threads" must be 10/);
+  bad({ forum: 'hackernews', endDate: '2026-10-01' }, /Unsupported forum/);
   bad({ forum: 'reddit', endDate: '2026-10-01', email: 'someone@example.com' }, /cannot be given an email address/);
   bad({ forum: 'reddit', endDate: '2026-10-01', notifyEmail: 'someone@example.com' }, /cannot be given an email address/);
   bad(null, /JSON object/);
@@ -346,23 +351,23 @@ test('POST /api/jobs requires auth, checks the product, and returns 201 with the
   assert.equal(noEmail.status, 400);
   assert.match((await noEmail.json()).error.message, /email/);
 
-  const ok = await post({ productId: PID, forum: ['reddit', 'hackernews'], endDate: today, threads: 5 });
+  const ok = await post({ productId: PID, forum: ['reddit', 'quora'], endDate: today });
   assert.equal(ok.status, 201);
   const booked = store[0].nextRunAt;
   assert.equal(booked.toISOString().slice(11), '03:00:00.000Z', 'a new job is booked into the daily 03:00 slot, not at the moment it was created');
   assert.ok(booked > new Date() && booked - new Date() <= 24 * 60 * 60 * 1000, 'the next slot, within a day');
   const { job } = await ok.json();
   assert.equal(job.productName, 'FollowUp', 'a new job names its product, which the route already read');
-  assert.deepEqual([job.productId, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, ['reddit', 'hackernews'], 5, 0.8, today, today, 'active', 'user-1']);
+  assert.deepEqual([job.productId, job.forums, job.threads, job.minScore, job.startDate, job.endDate, job.status, job.userId], [PID, ['reddit', 'quora'], 10, 0.5, today, today, 'active', 'user-1']);
   assert.ok(!('email' in job), 'no address is stored on or returned with a job');
 
-  const elsewhere = await post({ productId: PID, forum: 'x', endDate: today, email: 'stranger@example.com' });
+  const elsewhere = await post({ productId: PID, forum: 'quora', endDate: today, email: 'stranger@example.com' });
   assert.equal(elsewhere.status, 400, 'a job cannot be pointed at another address');
   assert.equal(store.length, 1, 'and nothing was created');
 
-  const second = await post({ productId: PID, forum: 'x', endDate: today, minScore: 0.9 });
+  const second = await post({ productId: PID, forum: 'quora', endDate: today, minScore: 0.75 });
   assert.equal(second.status, 201);
-  assert.equal((await second.json()).job.minScore, 0.9);
+  assert.equal((await second.json()).job.minScore, 0.75);
 });
 
 test('POST /api/jobs enforces the active job limit', async () => {

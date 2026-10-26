@@ -33,7 +33,7 @@ The server verifies the token's signature against the project's public JWKS endp
 npm run token -- you@example.com 'a-password' --signup   # creates the user; drop --signup afterwards
 TOKEN=$(npm run -s token -- you@example.com 'a-password')
 curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":5,"days":7}'
+  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":10,"days":7}'
 ```
 
 This needs `SUPABASE_ANON_KEY` in `.env` (the project's public client key, found under Project Settings > API Keys). If email confirmation is enabled in your Supabase auth settings, confirm the test user in the dashboard before signing in.
@@ -87,8 +87,8 @@ Lists supported forums with their ids, aliases, and searched domains.
 |---|---|---|---|
 | `productId` | yes | | UUID of one of your products (see `POST /api/products`). Its stored description drives the search, and the results are stored under it. |
 | `productDescription` | no | the product's | One-off override of the description for this search only. Max 2000 chars. |
-| `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, `hackernews`, `x`. Case-insensitive; aliases like `Hacker News`, `hacknews`, `twitter`, `facebook` also work. Also accepted as `forums` / `forumName` / `forum_name`. |
-| `threads` | no | 10 | Maximum number of threads to return in total, across all requested forums (1 to 50). A search returns fewer when fewer fit; it is never padded. Weak but real matches are included with a score of 0.25 or lower rather than dropped. Also accepted as `x` or `maxThreads`. |
+| `forum` | yes | | A forum id, a JSON array of ids, a comma-separated string, or `"all"`. Ids: `reddit`, `facebook-groups`, `quora`, `linkedin-groups`, the four the app offers, and `"all"` means those four. Case-insensitive; aliases like `facebook` and `linkedin` also work. Hacker News and X are still in the forum registry, so leads already stored from them display and filter, but a search or job naming them is refused with 400. Also accepted as `forums` / `forumName` / `forum_name`. |
+| `threads` | no | 10 | Maximum number of threads to return in total, across all requested forums: 10, 20, or 30, the choices the app offers. A search returns fewer when fewer fit; it is never padded. Weak but real matches are included with a score of 0.25 or lower rather than dropped. Also accepted as `x` or `maxThreads`. |
 | `from` | no | | First day to include, `YYYY-MM-DD` (UTC). Also `startDate` / `start_date`. |
 | `to` | no | today | Last day to include, `YYYY-MM-DD`, inclusive. Also `endDate` / `end_date`. Cannot be in the future. |
 | `days` | no | 1 | Shortcut when `from` is omitted: search the N days ending at `to`. Also accepted as `y`. |
@@ -98,22 +98,22 @@ The range from `from` to `to` may not exceed three months (92 days). Examples: `
 ```bash
 curl -s http://localhost:3000/api/threads \
   -H 'content-type: application/json' \
-  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":5,"days":7}'
+  -d '{"productId":"'$PRODUCT_ID'","forum":"reddit","threads":10,"days":7}'
 ```
 
 Search several forums in one call (each thread's `source` says where it came from):
 
 ```bash
 curl -s http://localhost:3000/api/threads -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"productId":"'$PRODUCT_ID'","forum":["reddit","hackernews","x"],"threads":10,"days":7}'
-# or  "forum":"all"      or, with GET,  ?forum=reddit,hackernews
+  -d '{"productId":"'$PRODUCT_ID'","forum":["reddit","quora","linkedin-groups"],"threads":10,"days":7}'
+# or  "forum":"all"      or, with GET,  ?forum=reddit,quora
 ```
 
 Response:
 
 ```json
 {
-  "query": { "productId": "...", "productName": "...", "productDescription": "...", "forums": ["reddit"], "threads": 5, "from": "2026-08-28", "to": "2026-09-04", "days": 7 },
+  "query": { "productId": "...", "productName": "...", "productDescription": "...", "forums": ["reddit"], "threads": 10, "from": "2026-08-28", "to": "2026-09-04", "days": 7 },
   "count": 3,
   "threads": [
     {
@@ -277,7 +277,7 @@ Every account starts with **300 free credits**. Searching spends them; buying mo
 
 | What | Costs |
 |---|---|
-| A search (`/api/threads`) | 1 credit per 10 leads requested, rounded up, for each forum. 10 leads on Reddit costs 1; 25 leads on Reddit and Hacker News costs 6. |
+| A search (`/api/threads`) | 1 credit per 10 leads requested, rounded up, for each forum. 10 leads on Reddit costs 1; 30 leads on Reddit and Quora costs 6. |
 | A scheduled job | 1 credit per forum, each day it runs, whatever its lead count |
 | Everything else | nothing, including `/api/products/describe` and composing a reply |
 
@@ -294,7 +294,7 @@ The caller's total and its free and paid breakdown, the pricing, and their credi
   "balance": 94, "free": 84, "paid": 10,
   "pricing": { "signupCredits": 100, "leadsPerCredit": 10, "jobRunCreditsPerForum": 1 },
   "transactions": [
-    { "id": "...", "delta": -4, "freeDelta": -4, "paidDelta": 0, "balanceAfter": 94, "reason": "search", "details": { "productId": "...", "forums": ["reddit", "hackernews"], "threads": 15 }, "createdAt": "..." },
+    { "id": "...", "delta": -4, "freeDelta": -4, "paidDelta": 0, "balanceAfter": 94, "reason": "search", "details": { "productId": "...", "forums": ["reddit", "quora"], "threads": 20 }, "createdAt": "..." },
     { "id": "...", "delta": 100, "freeDelta": 100, "paidDelta": 0, "balanceAfter": 100, "reason": "signup_grant", "details": null, "createdAt": "..." }
   ],
   "count": 2, "total": 2, "limit": 20, "offset": 0
@@ -391,7 +391,7 @@ Signing in is required, so errors on the sign-in and sign-up pages cannot be rep
 
 ## How search works
 
-Each request makes one Perplexity chat completion per requested forum, all at the same time, and ranks the threads from all of them together by score. A single call over several sites lets one site take nearly every retrieved source, so the other sites' best threads are never seen. Searching all six forums therefore costs six Perplexity calls, and takes about as long as the slowest one. The calls do not all leave at once: Perplexity's rate limit covers the whole account, and firing six together got five rejected, so every call waits in a queue that releases one every `PERPLEXITY_MIN_INTERVAL_MS` (1.2 seconds by default, matching the lowest tier's 50 requests a minute). A six-forum search therefore spends about 6 seconds in the queue. A call that would wait longer than `PERPLEXITY_MAX_QUEUE_WAIT_MS` fails with 429 rather than hanging. The queue is per process, so running more than one instance would need a shared one. Each call has:
+Each request makes one Perplexity chat completion per requested forum, all at the same time, and ranks the threads from all of them together by score. A single call over several sites lets one site take nearly every retrieved source, so the other sites' best threads are never seen. Searching all four forums therefore costs four Perplexity calls, and takes about as long as the slowest one. The calls do not all leave at once: Perplexity's rate limit covers the whole account, and firing six together got five rejected, so every call waits in a queue that releases one every `PERPLEXITY_MIN_INTERVAL_MS` (1.2 seconds by default, matching the lowest tier's 50 requests a minute). A four-forum search therefore spends about 4 seconds in the queue. A call that would wait longer than `PERPLEXITY_MAX_QUEUE_WAIT_MS` fails with 429 rather than hanging. The queue is per process, so running more than one instance would need a shared one. Each call has:
 
 - `search_domain_filter` restricted to that forum's domains
 - `web_search_options.search_context_size` from `PERPLEXITY_SEARCH_CONTEXT` (default `medium`; `high` gathers more sources per call, at a higher cost)
@@ -408,7 +408,7 @@ The `relevanceScore` is the model's own 0 to 1 judgement of how strongly the aut
 
 ## Scheduled searches
 
-A job runs the same search every day without the user doing anything: from the day it is created until an end date, it searches the chosen forums for the last day's threads, keeps the ones scoring at least `minScore` (80% by default), stores them under the product like any other search, and emails the user the ones that were not already stored. Requires the Supabase bearer token.
+A job runs the same search every day without the user doing anything: from the day it is created until an end date, it searches the chosen forums for the last day's threads, keeps the ones scoring at least `minScore` (50% by default), stores them under the product like any other search, and emails the user the ones that were not already stored. Requires the Supabase bearer token.
 
 ### `POST /api/jobs`
 
@@ -417,8 +417,8 @@ A job runs the same search every day without the user doing anything: from the d
 | `productId` | yes | | One of your products. Its description at the time of each run drives that run's search, so editing the product steers later runs. |
 | `forum` | yes | | Same forms as for `/api/threads`: an id, a list, a comma-separated string, or `"all"`. |
 | `endDate` | yes | | Last day the job runs, `YYYY-MM-DD` (UTC), inclusive. Today or later, at most 92 days out. Also `to` / `until`. |
-| `threads` | no | 10 | Maximum threads per run, across the forums (1 to 50). |
-| `minScore` | no | 0.8 | Only threads with `relevanceScore` at or above this are stored and emailed (0 to 1). |
+| `threads` | no | 10 | Maximum threads per run, across the forums. Always 10, as in the app, since a run is priced at 1 credit per forum; any other value is refused. |
+| `minScore` | no | 0.5 | Only threads with `relevanceScore` at or above this are stored and emailed: 0.25, 0.5, or 0.75, the choices the app offers. |
 
 ```bash
 curl -s https://helpyoufindthat-backend.onrender.com/api/jobs \
@@ -432,8 +432,8 @@ Returns `201` with the job:
 {
   "job": {
     "id": "...", "productId": "...", "productName": "FollowUp", "userId": "...",
-    "forums": ["reddit", "facebook-groups", "quora", "linkedin-groups", "hackernews", "x"],
-    "threads": 10, "minScore": 0.8, "startDate": "2026-09-17", "endDate": "2026-10-17",
+    "forums": ["reddit", "facebook-groups", "quora", "linkedin-groups"],
+    "threads": 10, "minScore": 0.5, "startDate": "2026-09-17", "endDate": "2026-10-17",
     "status": "active", "nextRunAt": "2026-09-17T14:02:11.318Z",
     "lastRunAt": null, "lastDateTo": null, "lastStatus": null, "lastError": null, "runCount": 0,
     "createdAt": "...", "updatedAt": "..."

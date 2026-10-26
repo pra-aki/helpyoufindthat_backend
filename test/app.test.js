@@ -44,9 +44,9 @@ test('GET /health is public', async () => {
   assert.deepEqual(await res.json(), { status: 'ok' });
 });
 
-test('GET /api/forums is public', async () => {
+test('GET /api/forums is public and lists the forums the app offers', async () => {
   const { forums } = await (await fetch(`${base}/api/forums`)).json();
-  assert.equal(forums.length, 6);
+  assert.deepEqual(forums.map((f) => f.id), ['reddit', 'facebook-groups', 'quora', 'linkedin-groups']);
 });
 
 test('POST /api/threads requires a valid token', async () => {
@@ -96,11 +96,11 @@ test('POST /api/threads counts a lead already stored under the product as existi
 });
 
 test('GET /api/threads accepts query-string parameters including x and y', async () => {
-  const qs = new URLSearchParams({ productId: PID, forum: 'hacknews', x: '4', y: '14' });
+  const qs = new URLSearchParams({ productId: PID, forum: 'linkedin', x: '20', y: '14' });
   const res = await fetch(`${base}/api/threads?${qs}`, { headers: auth });
   assert.equal(res.status, 200);
   const q = (await res.json()).query;
-  assert.deepEqual([q.forums, q.threads, q.days], [['hackernews'], 4, 14]);
+  assert.deepEqual([q.forums, q.threads, q.days], [['linkedin-groups'], 20, 14]);
 });
 
 test('GET /api/threads accepts an explicit from/to range', async () => {
@@ -118,10 +118,10 @@ test('forum accepts a JSON array in POST and a comma list in GET', async () => {
   const fresh = createApp({ credits: freeCredits, searchLog: { record: async () => true },  config: loadConfig({ SUPABASE_URL: 'https://abc.supabase.co' }), search: fakeSearch, verify: fakeVerify, products: fakeProducts, results: fakeResults }).listen(0);
   await new Promise((r) => fresh.once('listening', r));
   const b = `http://127.0.0.1:${fresh.address().port}`;
-  const postRes = await fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: ['reddit', 'x'] }) });
-  assert.deepEqual((await postRes.json()).query.forums, ['reddit', 'x']);
+  const postRes = await fetch(`${b}/api/threads`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ productId: PID, forum: ['reddit', 'quora'] }) });
+  assert.deepEqual((await postRes.json()).query.forums, ['reddit', 'quora']);
   const getRes = await fetch(`${b}/api/threads?${new URLSearchParams({ productId: PID, forum: 'all' })}`, { headers: auth });
-  assert.equal((await getRes.json()).query.forums.length, 6);
+  assert.equal((await getRes.json()).query.forums.length, 4);
   fresh.close();
 });
 

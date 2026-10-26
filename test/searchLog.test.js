@@ -151,14 +151,14 @@ const post = (b, body) => fetch(`${b}/api/threads`, { method: 'POST', headers: {
 test('a successful search writes one ok entry with the request, and diagnostics stay out of the response', async () => {
   logs = [];
   searchImpl = async () => ({ threads: [{ url: 'https://www.reddit.com/r/a/comments/k1/x/', title: 'T', relevanceScore: 0.9, source: 'reddit' }], meta: { model: 'fake' }, diagnostics: { prompt: 'PROMPT', dropped: [{ url: 'u', reason: 'not_a_thread' }] } });
-  const res = await post(base, { productId: PID, forum: ['reddit', 'x'], threads: 7, from: '2026-09-01', to: '2026-09-03' });
+  const res = await post(base, { productId: PID, forum: ['reddit', 'quora'], threads: 20, from: '2026-09-01', to: '2026-09-03' });
   assert.equal(res.status, 200);
   assert.ok(!('diagnostics' in (await res.json())), 'the prompt and drops are not sent to the browser');
   assert.equal(logs.length, 1);
   const { token, entry } = logs[0];
   assert.equal(token, 'good', 'written with the caller token, so row-level security applies');
   const { diagnostics, ...rest } = entry;
-  assert.deepEqual(rest, { productId: PID, userId: 'user-1', forums: ['reddit', 'x'], threadsRequested: 7, from: '2026-09-01', to: '2026-09-03', status: 'ok', returnedCount: 1 });
+  assert.deepEqual(rest, { productId: PID, userId: 'user-1', forums: ['reddit', 'quora'], threadsRequested: 20, from: '2026-09-01', to: '2026-09-03', status: 'ok', returnedCount: 1 });
   assert.equal(diagnostics.prompt, 'PROMPT');
 });
 

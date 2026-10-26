@@ -77,7 +77,8 @@ export function loadConfig(env = process.env) {
       maxActivePerUser: num(env.SEARCH_JOBS_MAX_ACTIVE_PER_USER, 5),
       // Due jobs are fetched this many at a time; the runner keeps going until none are left.
       batchSize: num(env.SEARCH_JOBS_BATCH_SIZE, 20),
-      defaultMinScore: 0.8,
+      // The app's own default.
+      defaultMinScore: 0.5,
     },
     cors: {
       // Comma-separated list of allowed browser origins. Empty means any origin.
@@ -88,6 +89,13 @@ export function loadConfig(env = process.env) {
       errorReportsPerMinute: num(env.ERROR_REPORTS_PER_MINUTE, 5),
     },
     defaults: { threads: 10, days: 1 },
-    limits: { maxThreads: 50, maxDays: 92, maxDescriptionLength: 2000 }, // 92 days covers any three calendar months
+    limits: {
+      // Each matches a choice the app offers, so a direct API call can ask for no more than the app does.
+      threadOptions: [10, 20, 30],
+      jobThreads: 10, // A job run costs 1 credit per forum, which pays for exactly 10 leads.
+      jobMinScoreOptions: [0.25, 0.5, 0.75],
+      maxDays: 92, // covers any three calendar months
+      maxDescriptionLength: 2000,
+    },
   };
 }
