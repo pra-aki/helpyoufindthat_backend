@@ -184,6 +184,15 @@ test('only threads the model labels as offering are dropped; discussion threads 
   assert.equal(out[1].asksFor, null);
 });
 
+test('each thread carries its one-line gist, trimmed, or null when the model left it out', () => {
+  const data = completion([
+    { title: 'A', url: 'https://www.reddit.com/r/a/comments/aaa111/a/', intent: 'seeking', asks_for: '', gist: '  Wants an app that reminds them to call leads back ', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.9 },
+    { title: 'B', url: 'https://www.reddit.com/r/a/comments/bbb222/b/', intent: 'seeking', asks_for: '', summary: 's', why_relevant: 'w', posted_at: '', relevance_score: 0.8 },
+  ]);
+  const out = parseThreadsResponse(data, { forums: [reddit], threads: 10 });
+  assert.deepEqual(out.map((t) => t.gist), ['Wants an app that reminds them to call leads back', null]);
+});
+
 test('the problem statement is surfaced in meta', async () => {
   const body = { model: 'sonar-pro', search_results: [], choices: [{ message: { content: JSON.stringify({ problem: 'I keep forgetting to follow up with leads', threads: [] }) } }] };
   const { meta } = await searchThreads({ productDescription: 'd', forums: [reddit], threads: 5, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-02T00:00:00Z'), config, fetchImpl: async () => jsonResponse(body) });

@@ -139,6 +139,7 @@ Response:
       "title": "What CRM do you use for follow-ups?",
       "url": "https://www.reddit.com/r/smallbusiness/comments/.../",
       "asksFor": "a simple way to get reminded to call leads back",
+      "gist": "Wants an app that reminds them to call leads back",
       "summary": "Poster runs a landscaping company and keeps forgetting to call leads back.",
       "whyRelevant": "Explicitly asking for a follow-up reminder tool.",
       "postedAt": "2026-08-30",
@@ -278,7 +279,7 @@ Stored search results for one of your products, latest search first, then by rel
 curl -s "https://helpyoufindthat-backend.onrender.com/api/products/$PRODUCT_ID/results?limit=100&source=reddit" -H "Authorization: Bearer $TOKEN"
 ```
 
-Returns `{ productId, results: [ { id, productId, source, link, title, summary, whyRelevant, postedAt, relevanceScore, searchDate, respondedAt, useful, feedbackNote, ratedAt, jobId, createdAt } ], count, total, limit, offset }`. `jobId` is the scheduled job whose run last stored the lead, or null if only manual searches found it. `total` is the number of matching rows regardless of paging.
+Returns `{ productId, results: [ { id, productId, source, link, title, gist, summary, whyRelevant, postedAt, relevanceScore, searchDate, respondedAt, useful, feedbackNote, ratedAt, jobId, createdAt } ], count, total, limit, offset }`. `gist` is one line saying what the author wants in terms of what the product does, for the results list; it is null for leads stored before 2026-11-14. `jobId` is the scheduled job whose run last stored the lead, or null if only manual searches found it. `total` is the number of matching rows regardless of paging.
 
 **How storage works.** A thread is stored once per product, keyed on the link. If a later search returns the same thread again, its row is updated in place: `searchDate` moves to the latest search and the score, title, and summary are refreshed. Nothing is ever duplicated, and no result is excluded from a search because it was seen before. The search itself is stateless; to get different threads, change the product description.
 
